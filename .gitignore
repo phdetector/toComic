@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+.gradle-home/
+build/
+
+# Android local configuration
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Stray zero-byte artifacts from the font download step
+/serif
+/preview/serif

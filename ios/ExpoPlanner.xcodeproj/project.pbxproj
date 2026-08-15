@@ -1,0 +1,310 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		BB0000000000000000000010 /* ExpoPlannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000010 /* ExpoPlannerApp.swift */; };
+		BB0000000000000000000011 /* ProjectHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* ProjectHomeView.swift */; };
+		BB0000000000000000000012 /* ProjectPlannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* ProjectPlannerView.swift */; };
+		BB0000000000000000000013 /* BoothCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000013 /* BoothCardView.swift */; };
+		BB0000000000000000000014 /* BottomSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* BottomSheets.swift */; };
+		BB0000000000000000000015 /* ExpoProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* ExpoProject.swift */; };
+		BB0000000000000000000016 /* ChinaJoyData.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* ChinaJoyData.swift */; };
+		BB0000000000000000000017 /* ProjectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* ProjectStore.swift */; };
+		BB0000000000000000000018 /* PlannerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000018 /* PlannerStore.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AA0000000000000000000010 /* ExpoPlannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpoPlannerApp.swift; sourceTree = "<group>"; };
+		AA0000000000000000000011 /* ProjectHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectHomeView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000012 /* ProjectPlannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPlannerView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000013 /* BoothCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoothCardView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000014 /* BottomSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomSheets.swift; sourceTree = "<group>"; };
+		AA0000000000000000000015 /* ExpoProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpoProject.swift; sourceTree = "<group>"; };
+		AA0000000000000000000016 /* ChinaJoyData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChinaJoyData.swift; sourceTree = "<group>"; };
+		AA0000000000000000000017 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
+		AA0000000000000000000018 /* PlannerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlannerStore.swift; sourceTree = "<group>"; };
+		FF0000000000000000000001 /* ExpoPlanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExpoPlanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		EE0000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000004 /* ExpoPlanner */,
+				AA0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FF0000000000000000000001 /* ExpoPlanner.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000004 /* ExpoPlanner */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000010 /* ExpoPlannerApp.swift */,
+				AA0000000000000000000005 /* Views */,
+				AA0000000000000000000006 /* Models */,
+				AA0000000000000000000007 /* Data */,
+			);
+			path = ExpoPlanner;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000011 /* ProjectHomeView.swift */,
+				AA0000000000000000000012 /* ProjectPlannerView.swift */,
+				AA0000000000000000000013 /* BoothCardView.swift */,
+				AA0000000000000000000014 /* BottomSheets.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000006 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000015 /* ExpoProject.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000007 /* Data */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000016 /* ChinaJoyData.swift */,
+				AA0000000000000000000017 /* ProjectStore.swift */,
+				AA0000000000000000000018 /* PlannerStore.swift */,
+			);
+			path = Data;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		BB0000000000000000000001 /* ExpoPlanner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC0000000000000000000002 /* Build configuration list for PBXNativeTarget "ExpoPlanner" */;
+			buildPhases = (
+				EE0000000000000000000001 /* Sources */,
+				EE0000000000000000000002 /* Frameworks */,
+				EE0000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ExpoPlanner;
+			productName = ExpoPlanner;
+			productReference = FF0000000000000000000001 /* ExpoPlanner.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					BB0000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = CC0000000000000000000001 /* Build configuration list for PBXProject "ExpoPlanner" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AA0000000000000000000002;
+			productRefGroup = AA0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				BB0000000000000000000001 /* ExpoPlanner */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EE0000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		EE0000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB0000000000000000000010 /* ExpoPlannerApp.swift in Sources */,
+				BB0000000000000000000011 /* ProjectHomeView.swift in Sources */,
+				BB0000000000000000000012 /* ProjectPlannerView.swift in Sources */,
+				BB0000000000000000000013 /* BoothCardView.swift in Sources */,
+				BB0000000000000000000014 /* BottomSheets.swift in Sources */,
+				BB0000000000000000000015 /* ExpoProject.swift in Sources */,
+				BB0000000000000000000016 /* ChinaJoyData.swift in Sources */,
+				BB0000000000000000000017 /* ProjectStore.swift in Sources */,
+				BB0000000000000000000018 /* PlannerStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		DD0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		DD0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		DD0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cj2026.expo.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		DD0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cj2026.expo.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CC0000000000000000000001 /* Build configuration list for PBXProject "ExpoPlanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DD0000000000000000000001 /* Debug */,
+				DD0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CC0000000000000000000002 /* Build configuration list for PBXNativeTarget "ExpoPlanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DD0000000000000000000003 /* Debug */,
+				DD0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AA0000000000000000000001 /* Project object */;
+}
