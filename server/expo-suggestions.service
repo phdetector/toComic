@@ -1,0 +1,15 @@
+[Unit]
+Description=Expo Planner suggestions receiver
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /opt/expo-suggestions/server.js
+Restart=always
+RestartSec=3
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

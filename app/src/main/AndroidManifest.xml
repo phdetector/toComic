@@ -6,6 +6,7 @@
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="Expo Planner"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@drawable/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.ChinaJoyPlanner">

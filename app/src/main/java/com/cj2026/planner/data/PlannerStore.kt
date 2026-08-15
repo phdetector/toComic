@@ -25,6 +25,10 @@ class PlannerStore(
         prefs.edit().putString("state_json", buildExportJson(snapshot.normalized()).toString()).apply()
     }
 
+    fun clear() {
+        prefs.edit().clear().apply()
+    }
+
     suspend fun exportTo(uri: Uri, snapshot: PlannerSnapshot) = withContext(Dispatchers.IO) {
         context.contentResolver.openOutputStream(uri)?.use { stream ->
             stream.write(buildExportJson(snapshot.normalized()).toString(2).toByteArray(Charsets.UTF_8))

@@ -1,6 +1,7 @@
 package com.cj2026.planner
 
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
@@ -18,6 +19,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -43,6 +45,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
@@ -76,11 +79,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -90,6 +95,7 @@ import androidx.compose.ui.unit.dp
 import com.cj2026.planner.data.PlannerStore
 import com.cj2026.planner.data.ProjectData
 import com.cj2026.planner.data.ProjectStore
+import com.cj2026.planner.data.SuggestionApi
 import com.cj2026.planner.model.Booth
 import com.cj2026.planner.model.BoothState
 import com.cj2026.planner.model.BoothUi
@@ -98,6 +104,7 @@ import com.cj2026.planner.model.ExpoProject
 import com.cj2026.planner.model.Hall
 import com.cj2026.planner.model.PlannerSnapshot
 import com.cj2026.planner.model.PlannerTab
+import com.cj2026.planner.model.ProjectOverrides
 import com.cj2026.planner.ui.ChinaJoyTheme
 import com.cj2026.planner.ui.CodeFont
 import com.cj2026.planner.ui.FavoriteRed
@@ -120,27 +127,72 @@ private fun AppRoot() {
     val context = LocalContext.current
     val projectStore = remember { ProjectStore(context) }
     val customProjects = remember { mutableStateListOf<ExpoProject>() }
+    val deletedBuiltInIds = remember { mutableStateListOf<String>() }
+    val builtInOverrides = remember { mutableStateMapOf<String, ProjectOverrides>() }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var showAddProject by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
-    val allProjects = remember(customProjects.toList()) { ProjectData.projects + customProjects }
+    var projectMenuId by remember { mutableStateOf<String?>(null) }
+    var editingProject by remember { mutableStateOf<ExpoProject?>(null) }
+    var deletingProject by remember { mutableStateOf<ExpoProject?>(null) }
+
+    val allProjects = remember(
+        customProjects.toList(),
+        deletedBuiltInIds.toSet(),
+        builtInOverrides.toMap()
+    ) {
+        ProjectData.projects
+            .filter { it.id !in deletedBuiltInIds }
+            .map { builtIn ->
+                val override = builtInOverrides[builtIn.id]
+                if (override == null) {
+                    builtIn
+                } else {
+                    builtIn.copy(
+                        title = override.title,
+                        subtitle = override.subtitle,
+                        year = override.year,
+                        note = override.note
+                    )
+                }
+            } + customProjects
+    }
     val project = selectedProjectId?.let { id -> allProjects.firstOrNull { it.id == id } }
-    LaunchedEffect(Unit) { customProjects.addAll(projectStore.loadProjects()) }
+    val menuProject = projectMenuId?.let { id -> allProjects.firstOrNull { it.id == id } }
+
+    fun persistProjects() {
+        projectStore.saveProjects(
+            customProjects.toList(),
+            deletedBuiltInIds.toSet(),
+            builtInOverrides.toMap()
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        val state = projectStore.loadProjectState()
+        customProjects.addAll(state.customProjects)
+        deletedBuiltInIds.addAll(state.deletedBuiltInIds)
+        builtInOverrides.putAll(state.overrides)
+    }
+
     BackHandler(enabled = showSettings || project != null) {
         if (showSettings) showSettings = false else selectedProjectId = null
     }
+
     if (showSettings) {
         SettingsScreen(onBack = { showSettings = false })
     } else if (project == null) {
         ProjectHome(
             projects = allProjects,
             onOpen = { selectedProjectId = it },
+            onLongPress = { projectMenuId = it },
             onAddProject = { showAddProject = true },
             onSettings = { showSettings = true }
         )
     } else {
         PlannerApp(project = project, onBack = { selectedProjectId = null })
     }
+
     if (showAddProject) {
         AddProjectDialog(
             normalize = { PlannerStore.normalizePunctuation(it) },
@@ -156,9 +208,73 @@ private fun AppRoot() {
                     booths = emptyList()
                 )
                 customProjects.add(newProject)
-                projectStore.saveProjects(customProjects.toList())
+                persistProjects()
                 showAddProject = false
                 selectedProjectId = newProject.id
+            }
+        )
+    }
+
+    editingProject?.let { target ->
+        AddProjectDialog(
+            initial = target,
+            normalize = { PlannerStore.normalizePunctuation(it) },
+            onDismiss = { editingProject = null },
+            onSave = { title, year, subtitle, note ->
+                if (ProjectData.projects.any { it.id == target.id }) {
+                    builtInOverrides[target.id] = ProjectOverrides(
+                        title = title,
+                        subtitle = subtitle,
+                        year = year,
+                        note = note
+                    )
+                } else {
+                    val index = customProjects.indexOfFirst { it.id == target.id }
+                    if (index >= 0) {
+                        customProjects[index] = customProjects[index].copy(
+                            title = title,
+                            subtitle = subtitle,
+                            year = year,
+                            note = note
+                        )
+                    }
+                }
+                persistProjects()
+                editingProject = null
+            }
+        )
+    }
+
+    if (menuProject != null) {
+        val target = menuProject
+        ProjectActionsSheet(
+            project = target,
+            onEdit = {
+                projectMenuId = null
+                editingProject = target
+            },
+            onDelete = {
+                projectMenuId = null
+                deletingProject = target
+            },
+            onDismiss = { projectMenuId = null }
+        )
+    }
+
+    deletingProject?.let { target ->
+        DeleteProjectConfirm(
+            project = target,
+            onDismiss = { deletingProject = null },
+            onConfirm = {
+                if (ProjectData.projects.any { it.id == target.id }) {
+                    if (target.id !in deletedBuiltInIds) deletedBuiltInIds.add(target.id)
+                } else {
+                    val index = customProjects.indexOfFirst { it.id == target.id }
+                    if (index >= 0) customProjects.removeAt(index)
+                    PlannerStore(context, target.id).clear()
+                }
+                persistProjects()
+                deletingProject = null
             }
         )
     }
@@ -168,6 +284,7 @@ private fun AppRoot() {
 private fun ProjectHome(
     projects: List<ExpoProject>,
     onOpen: (String) -> Unit,
+    onLongPress: (String) -> Unit,
     onAddProject: () -> Unit,
     onSettings: () -> Unit
 ) {
@@ -206,7 +323,11 @@ private fun ProjectHome(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 items(projects, key = { it.id }) { project ->
-                    ProjectCard(project = project, onClick = { onOpen(project.id) })
+                    ProjectCard(
+                        project = project,
+                        onClick = { onOpen(project.id) },
+                        onLongClick = { onLongPress(project.id) }
+                    )
                 }
             }
         }
@@ -221,47 +342,197 @@ private fun SettingsScreen(onBack: () -> Unit) {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrDefault("0.0.00")
     }
+    val snackbar = remember { SnackbarHostState() }
+    var showSuggestion by remember { mutableStateOf(false) }
+
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBack, modifier = Modifier.pressScale()) {
-                    Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
-                }
-                Text(
-                    text = "设置",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack, modifier = Modifier.pressScale()) {
+                        Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
+                    }
+                    Text(
+                        text = "设置",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "应用版本", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "V$versionName",
+                            style = MaterialTheme.typography.bodyLarge.copy(fontFamily = CodeFont),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .pressScale()
+                        .clickable { showSuggestion = true },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    Text(text = "应用版本", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        text = "V$versionName",
-                        style = MaterialTheme.typography.bodyLarge.copy(fontFamily = CodeFont),
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "提交建议", style = MaterialTheme.typography.bodyLarge)
+                        Icon(
+                            painterResource(R.drawable.ic_chevron_right),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            SnackbarHost(
+                hostState = snackbar,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp)
+            )
+        }
+    }
+
+    if (showSuggestion) {
+        SuggestionDialog(
+            appVersion = versionName,
+            normalize = { PlannerStore.normalizePunctuation(it) },
+            onDismiss = { showSuggestion = false },
+            onSubmit = { title, content ->
+                val result = SuggestionApi.submit(
+                    title = title,
+                    content = content,
+                    appVersion = versionName,
+                    deviceModel = Build.MODEL,
+                    androidVersion = Build.VERSION.RELEASE
+                )
+                if (result.isSuccess) {
+                    snackbar.showSnackbar("建议已提交")
+                } else {
+                    snackbar.showSnackbar("提交失败, 请检查网络后重试")
+                }
+                result.isSuccess
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SuggestionDialog(
+    appVersion: String,
+    normalize: (String) -> String,
+    onDismiss: () -> Unit,
+    onSubmit: suspend (title: String, content: String) -> Boolean
+) {
+    var title by remember { mutableStateOf("") }
+    var content by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    val cleanTitle = normalize(title).trim()
+    val cleanContent = normalize(content).trim()
+    val canSubmit = cleanTitle.isNotBlank() && cleanContent.isNotBlank() && !submitting
+    val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "提交建议",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "V$appVersion",
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = CodeFont),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = normalize(it) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                label = { Text("标题") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                )
+            )
+            OutlinedTextField(
+                value = content,
+                onValueChange = { content = normalize(it) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(160.dp),
+                shape = RoundedCornerShape(18.dp),
+                label = { Text("内容") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(
+                    onDone = { focusManager.clearFocus() }
+                )
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss, enabled = !submitting) { Text("取消") }
+                TextButton(
+                    enabled = canSubmit,
+                    onClick = {
+                        scope.launch {
+                            submitting = true
+                            val success = onSubmit(cleanTitle, cleanContent)
+                            submitting = false
+                            if (success) onDismiss()
+                        }
+                    }
+                ) {
+                    Text(if (submitting) "提交中..." else "提交")
                 }
             }
         }
@@ -269,15 +540,21 @@ private fun SettingsScreen(onBack: () -> Unit) {
 }
 
 
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ProjectCard(project: ExpoProject, onClick: () -> Unit) {
+private fun ProjectCard(
+    project: ExpoProject,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(1.dp, RoundedCornerShape(8.dp))
             .clip(RoundedCornerShape(8.dp))
             .pressScale()
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
@@ -315,6 +592,112 @@ private fun ProjectCard(project: ExpoProject, onClick: () -> Unit) {
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProjectActionsSheet(
+    project: ExpoProject,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = project.title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .pressScale()
+                    .clickable(onClick = onEdit)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(painterResource(R.drawable.ic_edit), contentDescription = "编辑")
+                Text("编辑")
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .pressScale()
+                    .clickable(onClick = onDelete)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(painterResource(R.drawable.ic_close), contentDescription = "删除")
+                Text("删除", color = FavoriteRed, fontWeight = FontWeight.SemiBold)
+            }
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DeleteProjectConfirm(
+    project: ExpoProject,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "删除项目",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "确定删除 \"${project.title}\" 吗? 删除后不可恢复.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(onClick = onConfirm) {
+                    Text("删除", color = FavoriteRed, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
@@ -1048,18 +1431,20 @@ private fun HallPicker(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AddProjectDialog(
+    initial: ExpoProject? = null,
     normalize: (String) -> String,
     onDismiss: () -> Unit,
     onSave: (title: String, year: String, subtitle: String, note: String) -> Unit
 ) {
-    var title by remember { mutableStateOf("") }
-    var year by remember { mutableStateOf("") }
-    var subtitle by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
+    var title by remember(initial?.id) { mutableStateOf(initial?.title ?: "") }
+    var year by remember(initial?.id) { mutableStateOf(initial?.year ?: "") }
+    var subtitle by remember(initial?.id) { mutableStateOf(initial?.subtitle ?: "") }
+    var note by remember(initial?.id) { mutableStateOf(initial?.note ?: "") }
     val cleanTitle = normalize(title).trim()
     val cleanYear = normalize(year).trim()
     val cleanSubtitle = normalize(subtitle).trim()
     val cleanNote = normalize(note)
+    val focusManager = LocalFocusManager.current
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -1072,12 +1457,13 @@ private fun AddProjectDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "添加项目",
+                text = if (initial == null) "添加项目" else "编辑项目",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1087,7 +1473,11 @@ private fun AddProjectDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("名称") }
+                label = { Text("名称") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                )
             )
             OutlinedTextField(
                 value = year,
@@ -1095,7 +1485,11 @@ private fun AddProjectDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("时间") }
+                label = { Text("时间") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                )
             )
             OutlinedTextField(
                 value = subtitle,
@@ -1103,7 +1497,11 @@ private fun AddProjectDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("地点") }
+                label = { Text("地点") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                )
             )
             OutlinedTextField(
                 value = note,
@@ -1112,7 +1510,11 @@ private fun AddProjectDialog(
                     .fillMaxWidth()
                     .height(112.dp),
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("备注") }
+                label = { Text("备注") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(
+                    onDone = { focusManager.clearFocus() }
+                )
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1149,6 +1551,7 @@ private fun AddBoothDialog(
     val cleanName = normalize(name).trim()
     val cleanNote = normalize(note)
     val canSave = cleanHallId.isNotBlank() && cleanBoothCode.isNotBlank() && cleanName.isNotBlank()
+    val focusManager = LocalFocusManager.current
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -1161,6 +1564,7 @@ private fun AddBoothDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1176,7 +1580,11 @@ private fun AddBoothDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("展馆") }
+                label = { Text("展馆") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                )
             )
             OutlinedTextField(
                 value = boothCode,
@@ -1184,7 +1592,11 @@ private fun AddBoothDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("展台号") }
+                label = { Text("展台号") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                )
             )
             OutlinedTextField(
                 value = name,
@@ -1192,7 +1604,11 @@ private fun AddBoothDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("展台名称") }
+                label = { Text("展台名称") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                )
             )
             OutlinedTextField(
                 value = note,
@@ -1201,7 +1617,11 @@ private fun AddBoothDialog(
                     .fillMaxWidth()
                     .height(112.dp),
                 shape = RoundedCornerShape(18.dp),
-                label = { Text("备注") }
+                label = { Text("备注") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(
+                    onDone = { focusManager.clearFocus() }
+                )
             )
             Row(
                 modifier = Modifier
