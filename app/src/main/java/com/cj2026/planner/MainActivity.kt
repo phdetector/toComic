@@ -122,15 +122,21 @@ private fun AppRoot() {
     val customProjects = remember { mutableStateListOf<ExpoProject>() }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var showAddProject by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     val allProjects = remember(customProjects.toList()) { ProjectData.projects + customProjects }
     val project = selectedProjectId?.let { id -> allProjects.firstOrNull { it.id == id } }
     LaunchedEffect(Unit) { customProjects.addAll(projectStore.loadProjects()) }
-    BackHandler(enabled = project != null) { selectedProjectId = null }
-    if (project == null) {
+    BackHandler(enabled = showSettings || project != null) {
+        if (showSettings) showSettings = false else selectedProjectId = null
+    }
+    if (showSettings) {
+        SettingsScreen(onBack = { showSettings = false })
+    } else if (project == null) {
         ProjectHome(
             projects = allProjects,
             onOpen = { selectedProjectId = it },
-            onAddProject = { showAddProject = true }
+            onAddProject = { showAddProject = true },
+            onSettings = { showSettings = true }
         )
     } else {
         PlannerApp(project = project, onBack = { selectedProjectId = null })
@@ -162,7 +168,8 @@ private fun AppRoot() {
 private fun ProjectHome(
     projects: List<ExpoProject>,
     onOpen: (String) -> Unit,
-    onAddProject: () -> Unit
+    onAddProject: () -> Unit,
+    onSettings: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -183,8 +190,13 @@ private fun ProjectHome(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
-                IconButton(onClick = onAddProject, modifier = Modifier.pressScale()) {
-                    Icon(painterResource(R.drawable.ic_add), contentDescription = "添加项目")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onAddProject, modifier = Modifier.pressScale()) {
+                        Icon(painterResource(R.drawable.ic_add), contentDescription = "添加项目")
+                    }
+                    IconButton(onClick = onSettings, modifier = Modifier.pressScale()) {
+                        Icon(painterResource(R.drawable.ic_settings), contentDescription = "设置")
+                    }
                 }
             }
             LazyColumn(
@@ -200,6 +212,62 @@ private fun ProjectHome(
         }
     }
 }
+
+@Composable
+private fun SettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val versionName = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrDefault("0.0.00")
+    }
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack, modifier = Modifier.pressScale()) {
+                    Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
+                }
+                Text(
+                    text = "设置",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = "应用版本", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "V$versionName",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontFamily = CodeFont),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun ProjectCard(project: ExpoProject, onClick: () -> Unit) {
