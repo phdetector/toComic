@@ -97,6 +97,7 @@ import com.cj2026.planner.data.PlannerStore
 import com.cj2026.planner.data.ProjectData
 import com.cj2026.planner.data.ProjectStore
 import com.cj2026.planner.data.SuggestionApi
+import com.cj2026.planner.data.SuggestionStore
 import com.cj2026.planner.model.Booth
 import com.cj2026.planner.model.BoothState
 import com.cj2026.planner.model.BoothUi
@@ -106,11 +107,15 @@ import com.cj2026.planner.model.Hall
 import com.cj2026.planner.model.PlannerSnapshot
 import com.cj2026.planner.model.PlannerTab
 import com.cj2026.planner.model.ProjectOverrides
+import com.cj2026.planner.model.Suggestion
 import com.cj2026.planner.ui.ChinaJoyTheme
 import com.cj2026.planner.ui.CodeFont
 import com.cj2026.planner.ui.FavoriteRed
 import com.cj2026.planner.ui.RemoteLogo
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -341,10 +346,18 @@ private fun SettingsScreen(onBack: () -> Unit) {
     val versionName = remember {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrDefault("0.0.1")
+        }.getOrDefault("0.0.2")
     }
     val snackbar = remember { SnackbarHostState() }
+    val suggestionStore = remember { SuggestionStore(context) }
+    val clientId = remember { suggestionStore.clientId() }
     var showSuggestion by remember { mutableStateOf(false) }
+    var showMySuggestions by remember { mutableStateOf(false) }
+
+    if (showMySuggestions) {
+        MySuggestionsScreen(onBack = { showMySuggestions = false })
+        return
+    }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -414,6 +427,30 @@ private fun SettingsScreen(onBack: () -> Unit) {
                         )
                     }
                 }
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressScale()
+                        .clickable { showMySuggestions = true },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "我的建议", style = MaterialTheme.typography.bodyLarge)
+                        Icon(
+                            painterResource(R.drawable.ic_chevron_right),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
             SnackbarHost(
                 hostState = snackbar,
@@ -431,6 +468,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
             onDismiss = { showSuggestion = false },
             onSubmit = { title, content ->
                 val result = SuggestionApi.submit(
+                    clientId = clientId,
                     title = title,
                     content = content,
                     appVersion = versionName,
@@ -447,6 +485,154 @@ private fun SettingsScreen(onBack: () -> Unit) {
         )
     }
 }
+
+@Composable
+private fun MySuggestionsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val suggestionStore = remember { SuggestionStore(context) }
+    val clientId = remember { suggestionStore.clientId() }
+    var suggestions by remember { mutableStateOf<List<Suggestion>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var loadFailed by remember { mutableStateOf(false) }
+    var refreshKey by remember { mutableStateOf(0) }
+
+    LaunchedEffect(clientId, refreshKey) {
+        loading = true
+        loadFailed = false
+        SuggestionApi.list(clientId)
+            .onSuccess { suggestions = it }
+            .onFailure { loadFailed = true }
+        loading = false
+    }
+
+    BackHandler(enabled = true) { onBack() }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack, modifier = Modifier.pressScale()) {
+                    Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
+                }
+                Text(
+                    text = "我的建议",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+            when {
+                loading -> Text(
+                    text = "加载中...",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                loadFailed -> Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressScale()
+                        .clickable { refreshKey += 1 },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Text(
+                        text = "加载失败, 点击重试",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                suggestions.isEmpty() -> Text(
+                    text = "暂无建议",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                else -> LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(suggestions, key = { it.id }) { suggestion ->
+                        SuggestionCard(suggestion)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionCard(suggestion: Suggestion) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = suggestion.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = suggestion.content,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = formatSuggestionTime(suggestion.submittedAt),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = CodeFont),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (suggestion.reply.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "开发者回复",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = suggestion.reply,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatSuggestionTime(timestamp: Long): String {
+    if (timestamp <= 0L) return ""
+    return runCatching {
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+    }.getOrDefault("")
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -476,7 +662,6 @@ private fun SuggestionDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)

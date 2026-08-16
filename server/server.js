@@ -1,6 +1,7 @@
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const { randomUUID } = require('node:crypto')
 
 const DATA_DIR = '/var/lib/expo-suggestions'
 const DATA_FILE = path.join(DATA_DIR, 'suggestions.jsonl')
@@ -53,17 +54,64 @@ function readBody(req, callback) {
   req.on('end', () => callback(raw))
 }
 
+function readSuggestions() {
+  let raw = ''
+  try {
+    raw = fs.readFileSync(DATA_FILE, 'utf8')
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return []
+    throw error
+  }
+  return raw
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      try {
+        return JSON.parse(line)
+      } catch (_error) {
+        return null
+      }
+    })
+    .filter(Boolean)
+}
+
+function appendSuggestion(record) {
+  fs.mkdirSync(DATA_DIR, { recursive: true })
+  fs.appendFileSync(DATA_FILE, JSON.stringify(record) + '\n')
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     })
     res.end()
     return
   }
-  const pathname = (req.url || '').split('?')[0]
+  const requestUrl = new URL(req.url || '/', 'http://127.0.0.1')
+  const pathname = requestUrl.pathname
+
+  if (req.method === 'GET' && pathname === '/api/suggestions') {
+    const clientId = String(requestUrl.searchParams.get('clientId') || '').trim().slice(0, 100)
+    if (clientId.length === 0) {
+      send(res, 400, { ok: false, error: 'clientId is required' })
+      return
+    }
+    try {
+      const suggestions = readSuggestions()
+        .filter(item => item.clientId === clientId)
+        .sort((left, right) => (right.submittedAt || 0) - (left.submittedAt || 0))
+        .slice(0, 200)
+      send(res, 200, { ok: true, suggestions })
+    } catch (error) {
+      console.error('failed to read suggestions', error)
+      send(res, 500, { ok: false, error: 'storage failed' })
+    }
+    return
+  }
+
   if (req.method !== 'POST' || pathname !== '/api/suggestions') {
     send(res, 404, { ok: false, error: 'not found' })
     return
@@ -94,7 +142,14 @@ const server = http.createServer((req, res) => {
       send(res, 422, { ok: false, error: 'title or content is too long' })
       return
     }
+    const clientId = String(data && data.clientId || '').trim().slice(0, 100)
+    if (clientId.length === 0) {
+      send(res, 400, { ok: false, error: 'clientId is required' })
+      return
+    }
     const record = {
+      id: randomUUID(),
+      clientId,
       title,
       content,
       appVersion: String(data && data.appVersion || '').slice(0, 50),
@@ -102,12 +157,13 @@ const server = http.createServer((req, res) => {
       androidVersion: String(data && data.androidVersion || '').slice(0, 50),
       submittedAt: Number(data && data.submittedAt) || Date.now(),
       receivedAt: Date.now(),
+      reply: '',
+      repliedAt: null,
       ip: clientIp,
     }
     try {
-      fs.mkdirSync(DATA_DIR, { recursive: true })
-      fs.appendFileSync(DATA_FILE, JSON.stringify(record) + '\n')
-      send(res, 200, { ok: true })
+      appendSuggestion(record)
+      send(res, 200, { ok: true, suggestion: record })
     } catch (error) {
       console.error('failed to store suggestion', error)
       send(res, 500, { ok: false, error: 'storage failed' })

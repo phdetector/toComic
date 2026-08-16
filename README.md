@@ -4,7 +4,7 @@ A multi-exhibition planner app for Android. The home screen manages exhibition p
 
 ## Version
 
-- Android app: `0.0.1` (`versionCode=2`), package `com.cj2026.expo`, label `Expo Planner`
+- Android app: `0.0.2` (`versionCode=3`), package `com.cj2026.expo`, label `Expo Planner`
 - Android minSdk 26, target/compileSdk 34
 - iOS: source project targeting iOS 26, built only on macOS + Xcode 26
 
@@ -17,7 +17,7 @@ A multi-exhibition planner app for Android. The home screen manages exhibition p
 - JSON import/export through the system file picker
 - Custom booths and custom project persistence via SharedPreferences
 - Light/dark theme with packed Noto Serif SC and JetBrains Mono NFM fonts
-- Suggestion submission to the configured server endpoint
+- Suggestion submission and "my suggestions" list with developer replies
 
 ## Structure
 

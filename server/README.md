@@ -4,7 +4,8 @@ Receives `POST /api/suggestions` from the Android app and appends each entry to 
 
 ## Files
 
-- `server.js`: Node receiver, listens on `127.0.0.1:7978`, validates input and rate-limits requests per IP
+- `server.js`: Node receiver, listens on `127.0.0.1:7978`, validates input, rate-limits POST requests per IP and serves `GET /api/suggestions?clientId=...`
+- `reply.js`: helper that writes a developer reply onto a stored suggestion
 - `expo-suggestions.service`: systemd unit running as the unprivileged `www` user
 - `nginx-default.conf`: nginx default server with the `/api/suggestions` proxy location
 
@@ -26,5 +27,12 @@ ssh -i C:\Users\yyyak\.ssh\gptvoice_id_ed25519 root@101.37.21.166 "mkdir -p /var
 ## Verify
 
 ```powershell
-curl.exe -X POST http://101.37.21.166/api/suggestions -H "Content-Type: application/json" --data-binary "{\"title\":\"test\",\"content\":\"test\"}"
+curl.exe -X POST http://101.37.21.166/api/suggestions -H "Content-Type: application/json" --data-binary "{\"clientId\":\"test\",\"title\":\"test\",\"content\":\"test\"}"
+curl.exe "http://101.37.21.166/api/suggestions?clientId=test"
+```
+
+Reply to a suggestion by id on the server:
+
+```bash
+sudo -u www node /opt/expo-suggestions/reply.js <suggestion-id> "developer reply text"
 ```
