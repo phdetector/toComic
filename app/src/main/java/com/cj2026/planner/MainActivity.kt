@@ -92,6 +92,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.cj2026.planner.data.PlannerStore
 import com.cj2026.planner.data.ProjectData
 import com.cj2026.planner.data.ProjectStore
@@ -247,7 +248,7 @@ private fun AppRoot() {
 
     if (menuProject != null) {
         val target = menuProject
-        ProjectActionsSheet(
+        ProjectActionsDialog(
             project = target,
             onEdit = {
                 projectMenuId = null
@@ -288,12 +289,6 @@ private fun ProjectHome(
     onAddProject: () -> Unit,
     onSettings: () -> Unit
 ) {
-    val context = LocalContext.current
-    val versionName = remember {
-        runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrDefault("0.0.1")
-    }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier
@@ -307,21 +302,12 @@ private fun ProjectHome(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "展会项目",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    Capsule(
-                        text = "V$versionName",
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                Text(
+                    text = "展会项目",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onAddProject, modifier = Modifier.pressScale()) {
                         Icon(painterResource(R.drawable.ic_add), contentDescription = "添加项目")
@@ -608,62 +594,64 @@ private fun ProjectCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ProjectActionsSheet(
+private fun ProjectActionsDialog(
     project: ExpoProject,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-    ) {
-        Column(
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
-            Text(
-                text = project.title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .pressScale()
-                    .clickable(onClick = onEdit)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(painterResource(R.drawable.ic_edit), contentDescription = "编辑")
-                Text("编辑")
+                Text(
+                    text = project.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .pressScale()
+                        .clickable(onClick = onEdit)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(painterResource(R.drawable.ic_edit), contentDescription = "编辑")
+                    Text("编辑")
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .pressScale()
+                        .clickable(onClick = onDelete)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(painterResource(R.drawable.ic_close), contentDescription = "删除")
+                    Text("删除", color = FavoriteRed, fontWeight = FontWeight.SemiBold)
+                }
+                TextButton(onClick = onDismiss) { Text("取消") }
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .pressScale()
-                    .clickable(onClick = onDelete)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Icon(painterResource(R.drawable.ic_close), contentDescription = "删除")
-                Text("删除", color = FavoriteRed, fontWeight = FontWeight.SemiBold)
-            }
-            TextButton(onClick = onDismiss) { Text("取消") }
         }
     }
 }
