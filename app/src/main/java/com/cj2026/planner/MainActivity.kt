@@ -341,7 +341,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
     val versionName = remember {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrDefault("0.0.00")
+        }.getOrDefault("0.0.1")
     }
     val snackbar = remember { SnackbarHostState() }
     var showSuggestion by remember { mutableStateOf(false) }

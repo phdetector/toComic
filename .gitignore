@@ -1,10 +1,14 @@
 # Gradle
 .gradle/
 .gradle-home/
+.kotlin/
 build/
 
 # Android local configuration
 local.properties
+*.hprof
+.cxx/
+captures/
 
 # IDE
 .idea/
@@ -13,6 +17,9 @@ local.properties
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
 
 # Stray zero-byte artifacts from the font download step
 /serif

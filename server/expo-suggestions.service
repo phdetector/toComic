@@ -7,7 +7,8 @@ Type=simple
 ExecStart=/usr/bin/node /opt/expo-suggestions/server.js
 Restart=always
 RestartSec=3
-User=root
+User=www
+Group=www
 StandardOutput=journal
 StandardError=journal
 
