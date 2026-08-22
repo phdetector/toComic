@@ -1507,6 +1507,9 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                     else state.copy(planned = true, planOrder = nextPlanOrder(states))
                 }
             },
+            onToggleCompleted = { booth ->
+                updateState(booth.id) { state -> state.copy(completed = !state.completed) }
+            },
             onSave = { booth, name, note, startTime, endTime ->
                 val cleanName = store.normalizePunctuation(name).trim()
                 val cleanNote = store.normalizePunctuation(note)
@@ -1863,6 +1866,7 @@ private fun BoothList(
     tab: PlannerTab,
     items: List<BoothUi>,
     onTogglePlan: (Booth) -> Unit,
+    onToggleCompleted: (Booth) -> Unit,
     onSave: (Booth, String, String, String, String) -> Unit,
     onMove: (Int, Int) -> Unit
 ) {
@@ -1891,6 +1895,7 @@ private fun BoothList(
                 ),
                 item = item,
                 onTogglePlan = { onTogglePlan(item.booth) },
+                onToggleCompleted = { onToggleCompleted(item.booth) },
                 onSave = { name, note, startTime, endTime ->
                     onSave(item.booth, name, note, startTime, endTime)
                 }
@@ -1962,6 +1967,7 @@ private fun BoothCard(
     modifier: Modifier,
     item: BoothUi,
     onTogglePlan: () -> Unit,
+    onToggleCompleted: () -> Unit,
     onSave: (String, String, String, String) -> Unit
 ) {
     var editing by remember(item.booth.id) { mutableStateOf(false) }
@@ -1982,6 +1988,14 @@ private fun BoothCard(
     )
     val heartScale = remember(item.booth.id) { Animatable(1f) }
     val haptic = LocalHapticFeedback.current
+    val completedColor by animateColorAsState(
+        targetValue = if (item.state.completed) Color(0xFF66CCFF) else MaterialTheme.colorScheme.surfaceVariant,
+        animationSpec = if (reduceMotion) tween(0) else spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "completedColor"
+    )
     LaunchedEffect(item.state.planned) {
         if (reduceMotion) {
             heartScale.snapTo(1f)
@@ -2055,6 +2069,22 @@ private fun BoothCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                  FilledTonalIconButton(
+                      onClick = {
+                          haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                          onToggleCompleted()
+                      },
+                      modifier = Modifier.pressScale(),
+                      colors = IconButtonDefaults.filledTonalIconButtonColors(
+                          containerColor = completedColor
+                      )
+                  ) {
+                      Icon(
+                          painterResource(R.drawable.ic_check),
+                          contentDescription = if (item.state.completed) "未完成" else "完成",
+                          tint = if (item.state.completed) Color(0xFF0D3B54) else MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
                 IconButton(
                     onClick = {
                         if (editing) {
