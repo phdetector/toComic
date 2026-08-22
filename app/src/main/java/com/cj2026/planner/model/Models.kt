@@ -64,3 +64,7 @@ data class BoothUi(
 enum class PlannerTab(val label: String) {
     Plan("计划"), Overview("总览")
 }
+
+enum class SortMode {
+    Default, Completion, Time
+}

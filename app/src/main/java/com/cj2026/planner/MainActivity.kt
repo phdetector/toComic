@@ -115,6 +115,7 @@ import com.cj2026.planner.model.Hall
 import com.cj2026.planner.model.PlannerSnapshot
 import com.cj2026.planner.model.PlannerTab
 import com.cj2026.planner.model.ProjectOverrides
+import com.cj2026.planner.model.SortMode
 import com.cj2026.planner.model.Suggestion
 import com.cj2026.planner.ui.ChinaJoyTheme
 import com.cj2026.planner.ui.CodeFont
@@ -1070,6 +1071,7 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
     var showHallPicker by remember(project.id) { mutableStateOf(false) }
     var showFileMenu by remember(project.id) { mutableStateOf(false) }
     var showAddBooth by remember(project.id) { mutableStateOf(false) }
+    var sortMode by remember(project.id) { mutableStateOf(SortMode.Default) }
 
     fun currentSnapshot(): PlannerSnapshot = PlannerSnapshot(states.toMap(), customBooths.toList())
 
@@ -1089,7 +1091,10 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
             customBooths[index] = booth.copy(
                 note = state.note,
                 planned = state.planned,
-                planOrder = state.planOrder
+                planOrder = state.planOrder,
+                startTime = state.startTime,
+                endTime = state.endTime,
+                completed = state.completed
             )
         }
     }
@@ -1142,9 +1147,9 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
             project.halls + customHalls
         }
     }
-    val items by remember(project.id, currentHall, currentTab, query) {
+    val items by remember(project.id, currentHall, currentTab, query, sortMode) {
         derivedStateOf {
-            buildList(allHalls, project.booths, currentHall?.id, currentTab, query, states, customBooths)
+            buildList(allHalls, project.booths, currentHall?.id, currentTab, query, sortMode, states, customBooths)
         }
     }
 
@@ -1155,12 +1160,29 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                 hall = currentHall,
                 searching = searching,
                 query = query,
+                sortMode = sortMode,
                 onQueryChange = { query = store.normalizePunctuation(it) },
                 onBackClick = onBack,
                 onHallClick = { showHallPicker = true },
                 onAddClick = { showAddBooth = true },
                 onSearchClick = { searching = true },
                 onCloseSearch = { searching = false; query = "" },
+                onSortClick = {
+                    sortMode = when (sortMode) {
+                        SortMode.Default -> SortMode.Completion
+                        SortMode.Completion -> SortMode.Time
+                        SortMode.Time -> SortMode.Default
+                    }
+                    scope.launch {
+                        snackbar.showSnackbar(
+                            when (sortMode) {
+                                SortMode.Default -> "已切换为默认排序"
+                                SortMode.Completion -> "已切换为是否完成排序"
+                                SortMode.Time -> "已切换为时间排序"
+                            }
+                        )
+                    }
+                },
                 onFileClick = { showFileMenu = true }
             )
         },
@@ -1275,6 +1297,7 @@ private fun buildList(
     hallId: String?,
     tab: PlannerTab,
     query: String,
+    sortMode: SortMode,
     states: Map<String, BoothState>,
     customBooths: List<CustomBooth>
 ): List<BoothUi> {
@@ -1300,13 +1323,35 @@ private fun buildList(
             )
                 .any { it.lowercase().contains(normalized) }
         }
-        .sortedWith(if (tab == PlannerTab.Plan) planComparator else boothNumberComparator)
+        .sortedWith(if (tab == PlannerTab.Plan) planComparator else sortComparator(sortMode))
         .toList()
 }
 
 private val planComparator = Comparator<BoothUi> { left, right ->
     val order = left.state.planOrder.compareTo(right.state.planOrder)
     if (order != 0) order else boothNumberComparator.compare(left, right)
+}
+
+private val completionComparator = Comparator<BoothUi> { left, right ->
+    val completed = left.state.completed.compareTo(right.state.completed)
+    if (completed != 0) completed else boothNumberComparator.compare(left, right)
+}
+
+private val timeComparator = Comparator<BoothUi> { left, right ->
+    val leftTime = left.state.startTime.ifBlank { null }
+    val rightTime = right.state.startTime.ifBlank { null }
+    when {
+        leftTime == null && rightTime == null -> boothNumberComparator.compare(left, right)
+        leftTime == null -> 1
+        rightTime == null -> -1
+        else -> leftTime.compareTo(rightTime).takeIf { it != 0 } ?: boothNumberComparator.compare(left, right)
+    }
+}
+
+private fun sortComparator(mode: SortMode): Comparator<BoothUi> = when (mode) {
+    SortMode.Default -> boothNumberComparator
+    SortMode.Completion -> completionComparator
+    SortMode.Time -> timeComparator
 }
 
 private val boothNumberComparator = Comparator<BoothUi> { left, right ->
@@ -1357,12 +1402,14 @@ private fun TopBar(
     hall: Hall?,
     searching: Boolean,
     query: String,
+    sortMode: SortMode,
     onQueryChange: (String) -> Unit,
     onHallClick: () -> Unit,
     onBackClick: (() -> Unit)? = null,
     onAddClick: () -> Unit,
     onSearchClick: () -> Unit,
     onCloseSearch: () -> Unit,
+    onSortClick: () -> Unit,
     onFileClick: () -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.background) {
@@ -1403,6 +1450,18 @@ private fun TopBar(
                 }
                 IconButton(onClick = onSearchClick, modifier = Modifier.pressScale()) {
                     Icon(painterResource(R.drawable.ic_search), contentDescription = "搜索")
+                }
+                IconButton(onClick = onSortClick, modifier = Modifier.pressScale()) {
+                    Icon(
+                        painterResource(
+                            when (sortMode) {
+                                SortMode.Default -> R.drawable.ic_sort_default
+                                SortMode.Completion -> R.drawable.ic_sort_done
+                                SortMode.Time -> R.drawable.ic_sort_time
+                            }
+                        ),
+                        contentDescription = "排序"
+                    )
                 }
                 IconButton(onClick = onFileClick, modifier = Modifier.pressScale()) {
                     Icon(painterResource(R.drawable.ic_file), contentDescription = "导入导出")
