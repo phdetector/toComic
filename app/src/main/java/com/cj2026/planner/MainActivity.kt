@@ -1,5 +1,6 @@
 package com.cj2026.planner
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -150,6 +151,18 @@ private fun AppRoot() {
     val appPrefs = remember { AppPrefs(context) }
     var pendingNotices by remember { mutableStateOf<List<AppNotice>>(emptyList()) }
     var updateInfo by remember { mutableStateOf<AppUpdate?>(null) }
+    var showDeclaration by remember { mutableStateOf(!appPrefs.declarationAccepted) }
+
+    if (showDeclaration) {
+        DeclarationDialog(
+            onDecline = { (context as? Activity)?.finish() },
+            onAccept = {
+                appPrefs.declarationAccepted = true
+                showDeclaration = false
+            }
+        )
+        return
+    }
 
     val allProjects = remember(
         customProjects.toList(),
@@ -884,6 +897,52 @@ private fun MessageDialog(
         }
     }
 }
+
+@Composable
+private fun DeclarationDialog(onDecline: () -> Unit, onAccept: () -> Unit) {
+    Dialog(onDismissRequest = {}) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "声明",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "本应用正处于测试阶段, 尚有很多不完美的地方, 欢迎您的反馈",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDecline, modifier = Modifier.pressScale()) {
+                        Text("取消")
+                    }
+                    TextButton(onClick = onAccept, modifier = Modifier.pressScale()) {
+                        Text("确定", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 
 @Composable
