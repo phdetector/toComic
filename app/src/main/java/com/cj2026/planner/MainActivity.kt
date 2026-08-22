@@ -356,7 +356,9 @@ private fun AppRoot() {
             dismissLabel = "取消",
             onDismiss = { updateInfo = null },
             onConfirm = {
-                val url = update.url.takeIf { it.isNotBlank() } ?: return@MessageDialog
+                val url = update.url.takeIf {
+                    it.isNotBlank() && (it.startsWith("https://") || it.startsWith("http://"))
+                } ?: return@MessageDialog
                 runCatching {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }
@@ -1346,7 +1348,12 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
-            val imported = store.importFrom(uri)
+            val loaded = runCatching { store.importFrom(uri) }
+            if (loaded.isFailure) {
+                snackbar.showSnackbar("导入失败: 文件无法解析")
+                return@launch
+            }
+            val imported = loaded.getOrThrow()
             val keep = importKeepFavorites
             val importHasFavorites = hasFavorites(imported)
             if (keep && !importHasFavorites) {
