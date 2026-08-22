@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Expo Planner 建议管理</title>
+<style>
+:root{--bg:#f5f4ee;--ink:#141413;--surface:#ffffff;--border:#e3e0d8;--accent:#da7756;--blue:#66ccff;--muted:#7a766c;}
+@media (prefers-color-scheme:dark){:root{--bg:#262624;--ink:#f5f4ee;--surface:#2f2e2c;--border:#46443f;--muted:#b6b0a4;}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,"Segoe UI","Noto Sans SC",sans-serif;min-height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
+header h1{font-size:17px;font-weight:700}
+.btn{border:1px solid var(--border);background:var(--surface);color:var(--ink);border-radius:8px;padding:8px 12px;font:inherit;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{background:transparent}
+.btn.on{background:var(--blue);border-color:var(--blue);color:#00324d}
+.layout{display:grid;grid-template-columns:3fr 1fr;gap:16px;padding:16px 18px;max-width:1200px;margin:0 auto}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px}
+.card .row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.card h2{font-size:15px;font-weight:700}
+.card .time{color:var(--muted);font-size:12px}
+.card p{white-space:pre-wrap;margin:8px 0}
+.card textarea{width:100%;min-height:64px;border:1px solid var(--border);border-radius:8px;padding:8px;font:inherit;background:var(--bg);color:var(--ink)}
+.card .actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.sidebar .card h2{font-size:14px;margin-bottom:8px}
+.filter{display:flex;flex-direction:column;gap:6px}
+.hidden{display:none}
+#login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center}
+#login form{width:min(360px,90vw);background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:10px}
+#login h1{font-size:18px}
+#login input{border:1px solid var(--border);border-radius:8px;padding:10px;font:inherit;background:var(--bg);color:var(--ink)}
+#login .error{color:#c65a52;font-size:13px}
+@media(max-width:760px){.layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Expo Planner 建议管理</h1>
+  <span id="stats" style="margin-left:auto;color:var(--muted);font-size:13px"></span>
+  <button class="btn ghost" id="logout" style="margin-left:8px">退出</button>
+</header>
+
+<div class="layout hidden" id="main">
+  <section id="list"></section>
+  <aside class="sidebar">
+    <div class="card">
+      <h2>筛选</h2>
+      <div class="filter">
+        <button class="btn on" data-filter="all">全部</button>
+        <button class="btn" data-filter="pending">未处理</button>
+        <button class="btn" data-filter="done">已处理</button>
+        <button class="btn" data-filter="archived">已归档</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>收藏</h2>
+      <button class="btn" id="favorites">查看收藏</button>
+    </div>
+  </aside>
+</div>
+
+<div id="login">
+  <form id="login-form">
+    <h1>验证身份</h1>
+    <input id="username" placeholder="用户名" autocomplete="username">
+    <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+    <div class="error hidden" id="login-error">验证失败</div>
+    <button class="btn primary" type="submit">登录</button>
+  </form>
+</div>
+
+<script>
+const state = { filter: 'all', favorites: false, data: [] }
+const listEl = document.getElementById('list')
+const loginEl = document.getElementById('login')
+const mainEl = document.getElementById('main')
+const statsEl = document.getElementById('stats')
+
+function fmt(ms) { if (!ms) return ''; const d = new Date(ms); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` }
+function done(item) { return Boolean(item.reply) || Boolean(item.processed) }
+
+function render() {
+  let items = state.data.slice()
+  if (state.filter === 'pending') items = items.filter(i => !done(i) && !i.archived)
+  else if (state.filter === 'done') items = items.filter(i => done(i) && !i.archived)
+  else if (state.filter === 'archived') items = items.filter(i => i.archived)
+  else if (state.favorites) items = items.filter(i => i.favorite)
+  items.sort((a, b) => { const ad = done(a), bd = done(b); if (ad !== bd) return ad ? 1 : -1; return (a.submittedAt || 0) - (b.submittedAt || 0) })
+
+  const pending = state.data.filter(i => !done(i)).length
+  const replied = state.data.filter(done).length
+  statsEl.textContent = `共 ${state.data.length} 条 / 未处理 ${pending} / 已处理 ${replied}`
+
+  listEl.innerHTML = ''
+  for (const item of items) {
+    const card = document.createElement('div')
+    card.className = 'card'
+    card.dataset.id = item.id
+    const archived = item.archived ? '已归档' : (done(item) ? '已处理' : '未处理')
+    card.innerHTML = `
+      <div class="row"><h2>${escapeHtml(item.title)}</h2><span class="time">${fmt(item.submittedAt)} · ${archived}</span></div>
+      <p>${escapeHtml(item.content)}</p>
+      <div class="row"><span class="time">版本 ${escapeHtml(item.appVersion || '-')} · ${escapeHtml(item.deviceModel || '-')}</span>
+        <span class="time">${item.favorite ? '已收藏' : ''}</span></div>
+      <textarea placeholder="输入回复">${escapeHtml(item.reply || '')}</textarea>
+      <div class="actions">
+        <button class="btn primary" data-act="reply">提交回复</button>
+        <button class="btn ${item.favorite ? 'on' : ''}" data-act="favorite">${item.favorite ? '取消收藏' : '收藏'}</button>
+        <button class="btn ${item.archived ? 'on' : ''}" data-act="archive">${item.archived ? '取消归档' : '归档'}</button>
+      </div>`
+    listEl.appendChild(card)
+  }
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+}
+
+async function api(route, method, body) {
+  const response = await fetch('/api/' + route, {
+    method: method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const payload = await response.json()
+  if (!response.ok || !payload.ok) throw new Error(payload.error || 'request failed')
+  return payload
+}
+
+async function load() {
+  const payload = await api('suggestions')
+  state.data = payload.suggestions || []
+  render()
+}
+
+document.getElementById('login-form').addEventListener('submit', async event => {
+  event.preventDefault()
+  try {
+    await api('login', 'POST', {
+      username: document.getElementById('username').value,
+      password: document.getElementById('password').value,
+    })
+    loginEl.classList.add('hidden')
+    mainEl.classList.remove('hidden')
+    await load()
+  } catch (error) {
+    document.getElementById('login-error').classList.remove('hidden')
+    document.getElementById('login-error').textContent = error.message
+  }
+})
+
+document.getElementById('logout').addEventListener('click', () => location.reload())
+
+document.querySelectorAll('[data-filter]').forEach(button => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('on'))
+    button.classList.add('on')
+    state.filter = button.dataset.filter
+    state.favorites = false
+    document.getElementById('favorites').classList.remove('on')
+    render()
+  })
+})
+
+document.getElementById('favorites').addEventListener('click', () => {
+  state.favorites = !state.favorites
+  document.getElementById('favorites').classList.toggle('on', state.favorites)
+  if (state.favorites) {
+    document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('on'))
+    state.filter = 'all'
+  }
+  render()
+})
+
+listEl.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-act]')
+  if (!button) return
+  const card = button.closest('.card')
+  const id = card.dataset.id
+  const act = button.dataset.act
+  try {
+    if (act === 'reply') {
+      const reply = card.querySelector('textarea').value
+      await api('reply', 'POST', { id, reply })
+    } else if (act === 'favorite') {
+      const item = state.data.find(i => i.id === id)
+      await api('favorite', 'POST', { id, favorite: !item.favorite })
+    } else if (act === 'archive') {
+      const item = state.data.find(i => i.id === id)
+      await api('archive', 'POST', { id, archived: !item.archived })
+    }
+    await load()
+  } catch (error) {
+    window.alert(error.message)
+  }
+})
+</script>
+</body>
+</html>

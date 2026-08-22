@@ -24,6 +24,10 @@ Thumbs.db
 # Local planning notes
 /202608221831.txt
 
+# Admin secrets
+/admin/.admin-secret.json
+/admin/admin-credentials.json
+
 # Stray zero-byte artifacts from the font download step
 /serif
 /preview/serif

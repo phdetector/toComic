@@ -36,3 +36,8 @@ Reply to a suggestion by id on the server:
 ```bash
 sudo -u www node /opt/expo-suggestions/reply.js <suggestion-id> "developer reply text"
 ```
+
+## Admin API
+
+The receiver also exposes an authenticated admin API on port `37795` (`POST /admin/login`, `GET /admin/suggestions`, `POST /admin/reply|favorite|archive`). Credentials are stored in `/var/lib/expo-suggestions/admin-credentials.json` and are consumed by the local admin UI under `admin/`.
+
