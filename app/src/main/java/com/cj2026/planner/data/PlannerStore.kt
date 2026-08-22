@@ -29,11 +29,14 @@ class PlannerStore(
         prefs.edit().clear().apply()
     }
 
-    suspend fun exportTo(uri: Uri, snapshot: PlannerSnapshot) = withContext(Dispatchers.IO) {
+    suspend fun exportTo(uri: Uri, snapshot: PlannerSnapshot, keepFavorites: Boolean) = withContext(Dispatchers.IO) {
         context.contentResolver.openOutputStream(uri)?.use { stream ->
-            stream.write(buildExportJson(snapshot.normalized()).toString(2).toByteArray(Charsets.UTF_8))
+            stream.write(exportJson(snapshot, keepFavorites).toByteArray(Charsets.UTF_8))
         }
     }
+
+    fun exportJson(snapshot: PlannerSnapshot, keepFavorites: Boolean): String =
+        buildExportJson(snapshot.normalized().forExport(keepFavorites)).toString(2)
 
     suspend fun importFrom(uri: Uri): PlannerSnapshot = withContext(Dispatchers.IO) {
         val text = context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -181,6 +184,22 @@ class PlannerStore(
             )
         }
         return PlannerSnapshot(normalizedStates, normalizedCustomBooths)
+    }
+
+    private fun PlannerSnapshot.forExport(keepFavorites: Boolean): PlannerSnapshot {
+        val exportedStates = states.mapValues { (_, state) ->
+            state.copy(
+                planned = keepFavorites && state.planned,
+                completed = false
+            )
+        }
+        val exportedCustomBooths = customBooths.map { booth ->
+            booth.copy(
+                planned = keepFavorites && booth.planned,
+                completed = false
+            )
+        }
+        return PlannerSnapshot(exportedStates, exportedCustomBooths)
     }
 
     private fun normalizeStateKeys(states: Map<String, BoothState>): Map<String, BoothState> {

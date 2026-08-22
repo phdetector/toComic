@@ -29,4 +29,8 @@ class AppPrefs(context: Context) {
         next.forEach { items.put(it) }
         prefs.edit().putString("seen_notice_ids", items.toString()).apply()
     }
+
+    var importConflictMode: String?
+        get() = prefs.getString("import_conflict_mode", null)
+        set(value) = prefs.edit().putString("import_conflict_mode", value).apply()
 }

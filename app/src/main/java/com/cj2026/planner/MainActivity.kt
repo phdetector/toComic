@@ -1,17 +1,21 @@
 package com.cj2026.planner
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -33,6 +37,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +47,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -121,10 +127,17 @@ import com.cj2026.planner.ui.ChinaJoyTheme
 import com.cj2026.planner.ui.CodeFont
 import com.cj2026.planner.ui.FavoriteRed
 import com.cj2026.planner.ui.RemoteLogo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private enum class FileMode { Export, Import }
+
+private enum class ImportConflict { KeepExisting, OverwriteWithNotes, OverwriteWithoutNotes }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -420,9 +433,14 @@ private fun SettingsScreen(onBack: () -> Unit) {
     val clientId = remember { suggestionStore.clientId() }
     var showSuggestion by remember { mutableStateOf(false) }
     var showMySuggestions by remember { mutableStateOf(false) }
+    var showImportSettings by remember { mutableStateOf(false) }
 
     if (showMySuggestions) {
         MySuggestionsScreen(onBack = { showMySuggestions = false })
+        return
+    }
+    if (showImportSettings) {
+        ImportSettingsScreen(onBack = { showImportSettings = false })
         return
     }
 
@@ -511,6 +529,30 @@ private fun SettingsScreen(onBack: () -> Unit) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(text = "我的建议", style = MaterialTheme.typography.bodyLarge)
+                        Icon(
+                            painterResource(R.drawable.ic_chevron_right),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressScale()
+                        .clickable { showImportSettings = true },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "导入设置", style = MaterialTheme.typography.bodyLarge)
                         Icon(
                             painterResource(R.drawable.ic_chevron_right),
                             contentDescription = null,
@@ -629,7 +671,135 @@ private fun MySuggestionsScreen(onBack: () -> Unit) {
                     items(suggestions, key = { it.id }) { suggestion ->
                         SuggestionCard(suggestion)
                     }
+
+
                 }
+            }
+        }
+    }
+}
+
+private suspend fun saveExportToDownloads(context: Context, projectId: String, json: String): Boolean =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val name = "ExpoPlanner-$projectId-${System.currentTimeMillis()}.json"
+            val bytes = json.toByteArray(Charsets.UTF_8)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, name)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/json")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("insert failed")
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: error("open failed")
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                dir.mkdirs()
+                File(dir, name).writeBytes(bytes)
+            }
+        }.isSuccess
+    }
+
+private suspend fun shareExportFile(context: Context, projectId: String, json: String) =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val dir = File(context.cacheDir, "exports")
+            dir.mkdirs()
+            val file = File(dir, "ExpoPlanner-$projectId-${System.currentTimeMillis()}.json")
+            file.writeText(json)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "分享项目数据"))
+        }
+    }
+
+@Composable
+private fun ImportSettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val appPrefs = remember { AppPrefs(context) }
+    var selected by remember {
+        mutableStateOf(
+            when (appPrefs.importConflictMode) {
+                "overwrite_notes" -> ImportConflict.OverwriteWithNotes
+                "overwrite_no_notes" -> ImportConflict.OverwriteWithoutNotes
+                else -> ImportConflict.KeepExisting
+            }
+        )
+    }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack, modifier = Modifier.pressScale()) {
+                    Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
+                }
+                Text(
+                    text = "导入设置",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+            ImportConflictOption("保留已有数据", selected == ImportConflict.KeepExisting) {
+                selected = ImportConflict.KeepExisting
+                appPrefs.importConflictMode = "keep"
+            }
+            ImportConflictOption("覆盖已有数据(含备注)", selected == ImportConflict.OverwriteWithNotes) {
+                selected = ImportConflict.OverwriteWithNotes
+                appPrefs.importConflictMode = "overwrite_notes"
+            }
+            ImportConflictOption("覆盖已有数据(不含备注)", selected == ImportConflict.OverwriteWithoutNotes) {
+                selected = ImportConflict.OverwriteWithoutNotes
+                appPrefs.importConflictMode = "overwrite_no_notes"
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportConflictOption(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressScale()
+            .clickable(onClick = onSelect),
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(label, fontWeight = FontWeight.SemiBold)
+            if (selected) {
+                Icon(
+                    painterResource(R.drawable.ic_sort_done),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }
@@ -1059,6 +1229,7 @@ private fun DeleteProjectConfirm(
 private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
     val context = LocalContext.current
     val store = remember(project.id) { PlannerStore(context, project.id) }
+    val appPrefs = remember { AppPrefs(context) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val states = remember(project.id) { mutableStateMapOf<String, BoothState>() }
@@ -1112,29 +1283,99 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
         customBooths.addAll(snapshot.customBooths)
     }
 
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch {
-            store.exportTo(uri, currentSnapshot())
-            snackbar.showSnackbar("已导出 JSON")
+    var importKeepFavorites by remember(project.id) { mutableStateOf(true) }
+    var pendingImport by remember(project.id) { mutableStateOf<PlannerSnapshot?>(null) }
+    var showImportConflict by remember(project.id) { mutableStateOf(false) }
+    var rememberImportChoice by remember(project.id) { mutableStateOf(false) }
+
+    fun hasFavorites(snapshot: PlannerSnapshot): Boolean =
+        snapshot.states.values.any { it.planned } || snapshot.customBooths.any { it.planned }
+
+    fun applyImported(imported: PlannerSnapshot, conflict: ImportConflict) {
+        val validStateIds = officialBoothIds + customBooths.map { it.id }
+        val existingCustomIds = customBooths.map { it.id }.toSet()
+        when (conflict) {
+            ImportConflict.KeepExisting -> {
+                imported.states.forEach { (id, state) ->
+                    if (id in validStateIds && id !in states) {
+                        states[id] = state
+                        syncCustomBoothState(id, state)
+                    }
+                }
+                imported.customBooths.forEach { booth ->
+                    if (booth.id !in existingCustomIds) customBooths.add(booth)
+                }
+            }
+            ImportConflict.OverwriteWithNotes -> {
+                imported.states.forEach { (id, state) ->
+                    if (id in validStateIds) {
+                        states[id] = state
+                        syncCustomBoothState(id, state)
+                    }
+                }
+                val importedIds = imported.customBooths.map { it.id }.toSet()
+                val merged = customBooths.filter { it.id !in importedIds } + imported.customBooths
+                customBooths.clear()
+                customBooths.addAll(merged)
+            }
+            ImportConflict.OverwriteWithoutNotes -> {
+                imported.states.forEach { (id, state) ->
+                    if (id in validStateIds) {
+                        val previous = states[id]
+                        val next = if (previous == null) state.copy(note = "") else state.copy(note = previous.note)
+                        states[id] = next
+                        syncCustomBoothState(id, next)
+                    }
+                }
+                val importedIds = imported.customBooths.map { it.id }.toSet()
+                val merged = customBooths.filter { it.id !in importedIds } + imported.customBooths
+                customBooths.clear()
+                customBooths.addAll(merged)
+            }
+        }
+        saveSnapshot()
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scope.launch {
+            val json = store.exportJson(currentSnapshot(), importKeepFavorites)
+            val saved = saveExportToDownloads(context, project.id, json)
+            snackbar.showSnackbar(if (saved) "已保存到下载目录" else "保存失败")
         }
     }
+
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             val imported = store.importFrom(uri)
-            val importedCustomIds = imported.customBooths.map { it.id }.toSet()
-            val mergedCustomBooths = customBooths.filter { it.id !in importedCustomIds } + imported.customBooths
-            customBooths.clear()
-            customBooths.addAll(mergedCustomBooths)
-
-            val validStateIds = officialBoothIds + customBooths.map { it.id }
-            imported.states.forEach { (id, state) ->
-                if (id in validStateIds) {
-                    states[id] = state
-                    syncCustomBoothState(id, state)
+            val keep = importKeepFavorites
+            val importHasFavorites = hasFavorites(imported)
+            if (keep && !importHasFavorites) {
+                snackbar.showSnackbar("导入文件内无收藏信息!")
+            }
+            val effective = if (keep) imported else imported.copy(
+                states = imported.states.mapValues { (_, state) -> state.copy(planned = false, planOrder = Int.MAX_VALUE) },
+                customBooths = imported.customBooths.map { it.copy(planned = false, planOrder = Int.MAX_VALUE) }
+            )
+            val hasExisting = states.isNotEmpty() || customBooths.isNotEmpty()
+            val remembered = appPrefs.importConflictMode?.let { raw ->
+                when (raw) {
+                    "keep" -> ImportConflict.KeepExisting
+                    "overwrite_notes" -> ImportConflict.OverwriteWithNotes
+                    "overwrite_no_notes" -> ImportConflict.OverwriteWithoutNotes
+                    else -> null
                 }
             }
-            saveSnapshot()
-            snackbar.showSnackbar("已导入 ${imported.states.size + imported.customBooths.size} 条记录")
+            if (!hasExisting) {
+                applyImported(effective, ImportConflict.OverwriteWithNotes)
+                snackbar.showSnackbar("已导入 ${effective.states.size + effective.customBooths.size} 条记录")
+            } else if (remembered != null) {
+                applyImported(effective, remembered)
+                snackbar.showSnackbar("已按导入设置导入 ${effective.states.size + effective.customBooths.size} 条记录")
+            } else {
+                pendingImport = effective
+                rememberImportChoice = false
+                showImportConflict = true
+            }
         }
     }
 
@@ -1252,15 +1493,60 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
     if (showFileMenu) {
         FileMenu(
             onDismiss = { showFileMenu = false },
-            onImport = {
+            onSaveExport = { keepFavorites ->
+                importKeepFavorites = keepFavorites
+                showFileMenu = false
+                val hasPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+                    context.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                if (hasPermission) {
+                    scope.launch {
+                        val json = store.exportJson(currentSnapshot(), keepFavorites)
+                        val saved = saveExportToDownloads(context, project.id, json)
+                        snackbar.showSnackbar(if (saved) "已保存到下载目录" else "保存失败")
+                    }
+                } else {
+                    permissionLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }
+            },
+            onShareExport = { keepFavorites ->
+                importKeepFavorites = keepFavorites
+                showFileMenu = false
+                scope.launch {
+                    val json = store.exportJson(currentSnapshot(), keepFavorites)
+                    shareExportFile(context, project.id, json)
+                }
+            },
+            onImport = { keepFavorites ->
+                importKeepFavorites = keepFavorites
                 showFileMenu = false
                 importLauncher.launch(arrayOf("application/json", "text/plain"))
-            },
-            onExport = {
-                showFileMenu = false
-                exportLauncher.launch("chinajoy-planner.json")
             }
         )
+    }
+    if (showImportConflict) {
+        val imported = pendingImport
+        if (imported != null) {
+            ImportConflictDialog(
+                rememberChoice = rememberImportChoice,
+                onRememberChange = { rememberImportChoice = it },
+                onChoose = { conflict ->
+                    if (rememberImportChoice) {
+                        appPrefs.importConflictMode = when (conflict) {
+                            ImportConflict.KeepExisting -> "keep"
+                            ImportConflict.OverwriteWithNotes -> "overwrite_notes"
+                            ImportConflict.OverwriteWithoutNotes -> "overwrite_no_notes"
+                        }
+                    }
+                    applyImported(imported, conflict)
+                    scope.launch {
+                        snackbar.showSnackbar("已导入 ${imported.states.size + imported.customBooths.size} 条记录")
+                    }
+                    showImportConflict = false
+                    pendingImport = null
+                }
+            )
+        }
     }
     if (showAddBooth) {
         AddBoothDialog(
@@ -2177,10 +2463,153 @@ private fun AddBoothDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FileMenu(onDismiss: () -> Unit, onImport: () -> Unit, onExport: () -> Unit) {
+private fun FileMenu(
+    onDismiss: () -> Unit,
+    onSaveExport: (Boolean) -> Unit,
+    onShareExport: (Boolean) -> Unit,
+    onImport: (Boolean) -> Unit
+) {
+    var mode by remember { mutableStateOf(FileMode.Export) }
+    var keepFavorites by remember { mutableStateOf(true) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "数据文件",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                FileMenuSegment(
+                    label = "导出",
+                    icon = R.drawable.ic_export,
+                    selected = mode == FileMode.Export,
+                    modifier = Modifier.weight(1f),
+                    onClick = { mode = FileMode.Export }
+                )
+                FileMenuSegment(
+                    label = "导入",
+                    icon = R.drawable.ic_import,
+                    selected = mode == FileMode.Import,
+                    modifier = Modifier.weight(1f),
+                    onClick = { mode = FileMode.Import }
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                FileMenuSegment(
+                    label = "保留收藏",
+                    icon = R.drawable.ic_heart,
+                    selected = keepFavorites,
+                    modifier = Modifier.weight(1f),
+                    onClick = { keepFavorites = true }
+                )
+                FileMenuSegment(
+                    label = "不保留收藏",
+                    icon = R.drawable.ic_heart,
+                    selected = !keepFavorites,
+                    modifier = Modifier.weight(1f),
+                    onClick = { keepFavorites = false }
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (mode == FileMode.Import) {
+                    TextButton(onClick = onDismiss, modifier = Modifier.pressScale()) { Text("取消") }
+                    TextButton(
+                        onClick = { onImport(keepFavorites) },
+                        modifier = Modifier.pressScale()
+                    ) {
+                        Text("导入", fontWeight = FontWeight.SemiBold)
+                    }
+                } else {
+                    TextButton(
+                        onClick = { onShareExport(keepFavorites) },
+                        modifier = Modifier.pressScale()
+                    ) {
+                        Text("分享")
+                    }
+                    TextButton(
+                        onClick = { onSaveExport(keepFavorites) },
+                        modifier = Modifier.pressScale()
+                    ) {
+                        Text("保存", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileMenuSegment(
+    label: String,
+    icon: Int,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .pressScale()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
+        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                painterResource(icon),
+                contentDescription = null,
+                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = label,
+                fontWeight = FontWeight.SemiBold,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ImportConflictDialog(
+    rememberChoice: Boolean,
+    onRememberChange: (Boolean) -> Unit,
+    onChoose: (ImportConflict) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = { },
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -2193,39 +2622,44 @@ private fun FileMenu(onDismiss: () -> Unit, onImport: () -> Unit, onExport: () -
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "数据文件",
+                text = "导入冲突",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
+            ConflictOption("保留已有数据", ImportConflict.KeepExisting, onChoose)
+            ConflictOption("覆盖已有数据(含备注)", ImportConflict.OverwriteWithNotes, onChoose)
+            ConflictOption("覆盖已有数据(不含备注)", ImportConflict.OverwriteWithoutNotes, onChoose)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
                     .pressScale()
-                    .clickable(onClick = onImport)
+                    .clickable { onRememberChange(!rememberChoice) }
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(14.dp),
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Icon(painterResource(R.drawable.ic_import), contentDescription = "导入")
-                Text("导入 JSON")
+                Checkbox(checked = rememberChoice, onCheckedChange = onRememberChange)
+                Text("是否记住我的选择", fontWeight = FontWeight.SemiBold)
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .pressScale()
-                    .clickable(onClick = onExport)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Icon(painterResource(R.drawable.ic_export), contentDescription = "导出")
-                Text("导出 JSON")
-            }
-            TextButton(onClick = onDismiss) { Text("关闭") }
         }
+    }
+}
+
+@Composable
+private fun ConflictOption(label: String, conflict: ImportConflict, onChoose: (ImportConflict) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .pressScale()
+            .clickable { onChoose(conflict) }
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(label, fontWeight = FontWeight.SemiBold)
     }
 }
