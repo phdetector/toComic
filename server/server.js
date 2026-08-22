@@ -30,6 +30,33 @@ function allowRequest(ip) {
   return true
 }
 
+const APP_MESSAGES_FILE = path.join(DATA_DIR, 'app-messages.json')
+const DEFAULT_APP_MESSAGES = {
+  notices: [
+    {
+      id: 'notice-0001',
+      title: '欢迎使用',
+      body: '欢迎使用 Expo Planner, 长按项目卡片可以编辑或删除项目.',
+    },
+  ],
+  update: null,
+}
+
+function readAppMessages() {
+  try {
+    const raw = fs.readFileSync(APP_MESSAGES_FILE, 'utf8')
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return DEFAULT_APP_MESSAGES
+    return {
+      notices: Array.isArray(parsed.notices) ? parsed.notices : [],
+      update: parsed.update && typeof parsed.update === 'object' ? parsed.update : null,
+    }
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') console.error('failed to read app messages', error)
+    return DEFAULT_APP_MESSAGES
+  }
+}
+
 function send(res, code, body) {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -92,6 +119,11 @@ const server = http.createServer((req, res) => {
   }
   const requestUrl = new URL(req.url || '/', 'http://127.0.0.1')
   const pathname = requestUrl.pathname
+
+  if (req.method === 'GET' && pathname === '/api/app/messages') {
+    send(res, 200, { ok: true, ...readAppMessages() })
+    return
+  }
 
   if (req.method === 'GET' && pathname === '/api/suggestions') {
     const clientId = String(requestUrl.searchParams.get('clientId') || '').trim().slice(0, 100)

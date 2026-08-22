@@ -1,6 +1,8 @@
 package com.cj2026.planner
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -93,11 +95,15 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.cj2026.planner.data.AppMessagesApi
+import com.cj2026.planner.data.AppPrefs
 import com.cj2026.planner.data.PlannerStore
 import com.cj2026.planner.data.ProjectData
 import com.cj2026.planner.data.ProjectStore
 import com.cj2026.planner.data.SuggestionApi
 import com.cj2026.planner.data.SuggestionStore
+import com.cj2026.planner.model.AppNotice
+import com.cj2026.planner.model.AppUpdate
 import com.cj2026.planner.model.Booth
 import com.cj2026.planner.model.BoothState
 import com.cj2026.planner.model.BoothUi
@@ -141,6 +147,9 @@ private fun AppRoot() {
     var projectMenuId by remember { mutableStateOf<String?>(null) }
     var editingProject by remember { mutableStateOf<ExpoProject?>(null) }
     var deletingProject by remember { mutableStateOf<ExpoProject?>(null) }
+    val appPrefs = remember { AppPrefs(context) }
+    var pendingNotices by remember { mutableStateOf<List<AppNotice>>(emptyList()) }
+    var updateInfo by remember { mutableStateOf<AppUpdate?>(null) }
 
     val allProjects = remember(
         customProjects.toList(),
@@ -179,6 +188,20 @@ private fun AppRoot() {
         customProjects.addAll(state.customProjects)
         deletedBuiltInIds.addAll(state.deletedBuiltInIds)
         builtInOverrides.putAll(state.overrides)
+    }
+
+    LaunchedEffect(Unit) {
+        val messages = AppMessagesApi.fetch().getOrNull() ?: return@LaunchedEffect
+        val seen = appPrefs.seenNoticeIds()
+        pendingNotices = messages.notices.filter { it.id !in seen }
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        val currentVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo.longVersionCode.toInt()
+        } else {
+            @Suppress("DEPRECATION")
+            packageInfo.versionCode
+        }
+        updateInfo = messages.update?.takeIf { it.versionCode > currentVersionCode }
     }
 
     BackHandler(enabled = showSettings || project != null) {
@@ -281,6 +304,35 @@ private fun AppRoot() {
                 }
                 persistProjects()
                 deletingProject = null
+            }
+        )
+    }
+
+    pendingNotices.firstOrNull()?.let { notice ->
+        MessageDialog(
+            title = notice.title,
+            body = notice.body,
+            confirmLabel = "确定",
+            onConfirm = {
+                appPrefs.markNoticeSeen(notice.id)
+                pendingNotices = pendingNotices.drop(1)
+            }
+        )
+    }
+
+    updateInfo?.let { update ->
+        MessageDialog(
+            title = update.title.ifBlank { "发现新版本 ${update.versionName}" },
+            body = update.body.ifBlank { "发现新版本 ${update.versionName}, 是否立即更新?" },
+            confirmLabel = "更新",
+            dismissLabel = "取消",
+            onDismiss = { updateInfo = null },
+            onConfirm = {
+                val url = update.url.takeIf { it.isNotBlank() } ?: return@MessageDialog
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+                updateInfo = null
             }
         )
     }
@@ -778,6 +830,61 @@ private fun ProjectCard(
         }
     }
 }
+
+@Composable
+private fun MessageDialog(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    dismissLabel: String? = null,
+    onDismiss: (() -> Unit)? = null,
+    onConfirm: () -> Unit
+) {
+    Dialog(onDismissRequest = { onDismiss?.invoke() ?: onConfirm() }) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = body,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (dismissLabel != null && onDismiss != null) {
+                        TextButton(onClick = onDismiss, modifier = Modifier.pressScale()) {
+                            Text(dismissLabel)
+                        }
+                    }
+                    TextButton(onClick = onConfirm, modifier = Modifier.pressScale()) {
+                        Text(confirmLabel, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun ProjectActionsDialog(
