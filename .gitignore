@@ -21,6 +21,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Local planning notes
+/202608221831.txt
+
 # Stray zero-byte artifacts from the font download step
 /serif
 /preview/serif
