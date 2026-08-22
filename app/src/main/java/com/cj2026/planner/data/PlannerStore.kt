@@ -64,6 +64,9 @@ class PlannerStore(
                 put("customName", state.customName?.let(::normalizePunctuation) ?: JSONObject.NULL)
                 put("planned", state.planned)
                 put("planOrder", state.planOrder)
+                put("startTime", state.startTime)
+                put("endTime", state.endTime)
+                put("completed", state.completed)
             })
         }
 
@@ -78,11 +81,14 @@ class PlannerStore(
                     put("note", normalizePunctuation(booth.note))
                     put("planned", booth.planned)
                     put("planOrder", booth.planOrder)
+                    put("startTime", booth.startTime)
+                    put("endTime", booth.endTime)
+                    put("completed", booth.completed)
                 })
             }
 
         return JSONObject().apply {
-            put("version", 2)
+            put("version", 3)
             put("items", items)
             put("customBooths", customBooths)
         }
@@ -109,7 +115,10 @@ class PlannerStore(
                 note = normalizePunctuation(item.optString("note", "")),
                 customName = custom?.let(::normalizePunctuation),
                 planned = item.optBoolean("planned", false),
-                planOrder = item.optInt("planOrder", Int.MAX_VALUE)
+                planOrder = item.optInt("planOrder", Int.MAX_VALUE),
+                startTime = item.optString("startTime", ""),
+                endTime = item.optString("endTime", ""),
+                completed = item.optBoolean("completed", false)
             )
             if (normalizedId == id || normalizedId !in result) {
                 result[normalizedId] = state
@@ -135,7 +144,10 @@ class PlannerStore(
                 name = name,
                 note = normalizePunctuation(item.optString("note", "")),
                 planned = item.optBoolean("planned", false),
-                planOrder = item.optInt("planOrder", Int.MAX_VALUE)
+                planOrder = item.optInt("planOrder", Int.MAX_VALUE),
+                startTime = item.optString("startTime", ""),
+                endTime = item.optString("endTime", ""),
+                completed = item.optBoolean("completed", false)
             )
         }
         return result.values.toList()
@@ -162,7 +174,10 @@ class PlannerStore(
             normalizedStates[booth.id] = current.copy(
                 note = current.note.ifBlank { booth.note },
                 planned = current.planned || booth.planned,
-                planOrder = minOf(current.planOrder, booth.planOrder)
+                planOrder = minOf(current.planOrder, booth.planOrder),
+                startTime = current.startTime.ifBlank { booth.startTime },
+                endTime = current.endTime.ifBlank { booth.endTime },
+                completed = current.completed || booth.completed
             )
         }
         return PlannerSnapshot(normalizedStates, normalizedCustomBooths)

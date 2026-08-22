@@ -93,6 +93,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -1180,7 +1181,7 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                     else state.copy(planned = true, planOrder = nextPlanOrder(states))
                 }
             },
-            onSave = { booth, name, note ->
+            onSave = { booth, name, note, startTime, endTime ->
                 val cleanName = store.normalizePunctuation(name).trim()
                 val cleanNote = store.normalizePunctuation(note)
                 val customIndex = customBooths.indexOfFirst { it.id == booth.id }
@@ -1188,14 +1189,20 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                     val custom = customBooths[customIndex]
                     customBooths[customIndex] = custom.copy(
                         name = cleanName.ifBlank { custom.name },
-                        note = cleanNote
+                        note = cleanNote,
+                        startTime = startTime,
+                        endTime = endTime
                     )
-                    updateState(booth.id) { state -> state.copy(customName = null, note = cleanNote) }
+                    updateState(booth.id) { state ->
+                        state.copy(customName = null, note = cleanNote, startTime = startTime, endTime = endTime)
+                    }
                 } else {
                     updateState(booth.id) { state ->
                         state.copy(
                             customName = cleanName.takeIf { it.isNotBlank() && it != booth.name },
-                            note = cleanNote
+                            note = cleanNote,
+                            startTime = startTime,
+                            endTime = endTime
                         )
                     }
                 }
@@ -1448,7 +1455,7 @@ private fun BoothList(
     tab: PlannerTab,
     items: List<BoothUi>,
     onTogglePlan: (Booth) -> Unit,
-    onSave: (Booth, String, String) -> Unit,
+    onSave: (Booth, String, String, String, String) -> Unit,
     onMove: (Int, Int) -> Unit
 ) {
     if (items.isEmpty()) {
@@ -1476,7 +1483,9 @@ private fun BoothList(
                 ),
                 item = item,
                 onTogglePlan = { onTogglePlan(item.booth) },
-                onSave = { name, note -> onSave(item.booth, name, note) }
+                onSave = { name, note, startTime, endTime ->
+                    onSave(item.booth, name, note, startTime, endTime)
+                }
             )
         }
     }
@@ -1545,11 +1554,14 @@ private fun BoothCard(
     modifier: Modifier,
     item: BoothUi,
     onTogglePlan: () -> Unit,
-    onSave: (String, String) -> Unit
+    onSave: (String, String, String, String) -> Unit
 ) {
     var editing by remember(item.booth.id) { mutableStateOf(false) }
     var name by remember(item.displayName) { mutableStateOf(item.displayName) }
     var note by remember(item.state.note) { mutableStateOf(item.state.note) }
+    var startTime by remember(item.state.startTime) { mutableStateOf(item.state.startTime) }
+    var endTime by remember(item.state.endTime) { mutableStateOf(item.state.endTime) }
+    var timeError by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val reduceMotion = remember { reduceMotionEnabled(context) }
     val heartColor by animateColorAsState(
@@ -1637,8 +1649,24 @@ private fun BoothCard(
                 }
                 IconButton(
                     onClick = {
-                    if (editing) onSave(name, note)
-                    editing = !editing
+                        if (editing) {
+                            val startValid = startTime.isBlank() || isValidTime(startTime, allow2400 = false)
+                            val endValid = endTime.isBlank() || isValidTime(endTime, allow2400 = true)
+                            if (startValid && endValid) {
+                                onSave(
+                                    name,
+                                    note,
+                                    normalizeTime(startTime),
+                                    normalizeTime(endTime)
+                                )
+                                timeError = false
+                                editing = false
+                            } else {
+                                timeError = true
+                            }
+                        } else {
+                            editing = true
+                        }
                     },
                     modifier = Modifier.pressScale()
                 ) {
@@ -1672,37 +1700,117 @@ private fun BoothCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 RemoteLogo(url = item.booth.logoUrl, label = item.displayName)
-                if (editing) {
-                    OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        shape = RoundedCornerShape(16.dp),
-                        placeholder = { Text("备注") }
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f))
-                            .padding(12.dp)
-                    ) {
-                        Text(
-                            text = item.state.note.ifBlank { "备注" },
-                            color = if (item.state.note.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 5,
-                            overflow = TextOverflow.Ellipsis
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (editing) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = startTime,
+                                onValueChange = { startTime = sanitizeTimeInput(it) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                placeholder = { Text("00:00") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                            Text(
+                                text = "至",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = endTime,
+                                onValueChange = { endTime = sanitizeTimeInput(it) },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                placeholder = { Text("24:00") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                        }
+                        if (timeError) {
+                            Text(
+                                text = "时间范围 00:00-24:00",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        OutlinedTextField(
+                            value = note,
+                            onValueChange = { note = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            placeholder = { Text("备注") }
                         )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f))
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = item.state.startTime.ifBlank { "--:--" },
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = CodeFont),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "至",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = item.state.endTime.ifBlank { "--:--" },
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = CodeFont),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private fun sanitizeTimeInput(raw: String): String {
+    val digits = raw.filter { it.isDigit() }.take(4)
+    return when {
+        digits.isEmpty() -> ""
+        digits.length <= 2 -> digits
+        else -> digits.take(2) + ":" + digits.drop(2).take(2)
+    }
+}
+
+private fun isValidTime(value: String, allow2400: Boolean): Boolean {
+    val match = Regex("(\\d{2}):(\\d{2})").matchEntire(value) ?: return false
+    val hour = match.groupValues[1].toInt()
+    val minute = match.groupValues[2].toInt()
+    if (minute > 59) return false
+    if (hour == 24) return allow2400 && minute == 0
+    return hour in 0..23
+}
+
+private fun normalizeTime(value: String): String =
+    if (value.isBlank()) "" else value.trim()
+
 
 @Composable
 private fun Capsule(text: String, color: Color, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {

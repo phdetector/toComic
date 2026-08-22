@@ -4,7 +4,7 @@ A multi-exhibition planner app for Android. The home screen manages exhibition p
 
 ## Version
 
-- Android app: `0.0.4` (`versionCode=5`), package `com.cj2026.expo`, label `Expo Planner`
+- Android app: `0.0.5` (`versionCode=6`), package `com.cj2026.expo`, label `Expo Planner`
 - Android minSdk 26, target/compileSdk 34
 - iOS: source project targeting iOS 26, built only on macOS + Xcode 26
 

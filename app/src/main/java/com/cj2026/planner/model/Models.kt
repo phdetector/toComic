@@ -19,7 +19,10 @@ data class BoothState(
     val note: String = "",
     val customName: String? = null,
     val planned: Boolean = false,
-    val planOrder: Int = Int.MAX_VALUE
+    val planOrder: Int = Int.MAX_VALUE,
+    val startTime: String = "",
+    val endTime: String = "",
+    val completed: Boolean = false
 )
 
 data class CustomBooth(
@@ -29,10 +32,20 @@ data class CustomBooth(
     val name: String,
     val note: String = "",
     val planned: Boolean = false,
-    val planOrder: Int = Int.MAX_VALUE
+    val planOrder: Int = Int.MAX_VALUE,
+    val startTime: String = "",
+    val endTime: String = "",
+    val completed: Boolean = false
 ) {
     fun asBooth(): Booth = Booth(id, hallId, boothCode, name)
-    fun asState(): BoothState = BoothState(note = note, planned = planned, planOrder = planOrder)
+    fun asState(): BoothState = BoothState(
+        note = note,
+        planned = planned,
+        planOrder = planOrder,
+        startTime = startTime,
+        endTime = endTime,
+        completed = completed
+    )
 }
 
 data class PlannerSnapshot(
