@@ -127,6 +127,11 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.headers['x-expo-admin'] !== '1') {
+    json(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+
   if (!token) {
     json(res, 401, { ok: false, error: 'unauthorized' })
     return

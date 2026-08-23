@@ -120,7 +120,7 @@ function escapeHtml(value) {
 async function api(route, method, body) {
   const response = await fetch('/api/' + route, {
     method: method || 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Expo-Admin': '1' },
     body: body ? JSON.stringify(body) : undefined,
   })
   const payload = await response.json()

@@ -1,10 +1,11 @@
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
-const { randomUUID, createHmac, scryptSync, timingSafeEqual } = require('node:crypto')
+const { randomUUID, createHmac, scryptSync, timingSafeEqual, createHash, randomBytes } = require('node:crypto')
 
 const DATA_DIR = '/var/lib/expo-suggestions'
 const DATA_FILE = path.join(DATA_DIR, 'suggestions.jsonl')
+const CLIENT_SECRETS_FILE = path.join(DATA_DIR, 'client-secrets.jsonl')
 const MAX_TITLE = 200
 const MAX_CONTENT = 5000
 const MAX_BODY = 64 * 1024
@@ -27,7 +28,51 @@ function allowRequest(ip) {
   if (recent.length >= RATE_LIMIT) return false
   recent.push(now)
   requestTimes.set(ip, recent)
+  if (requestTimes.size > 10000) requestTimes.clear()
   return true
+}
+
+function readClientSecrets() {
+  let raw = ''
+  try {
+    raw = fs.readFileSync(CLIENT_SECRETS_FILE, 'utf8')
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return new Map()
+    throw error
+  }
+  const map = new Map()
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const parsed = JSON.parse(line)
+      if (parsed.clientId && parsed.secret) map.set(parsed.clientId, parsed.secret)
+    } catch (_error) { /* skip malformed line */ }
+  }
+  return map
+}
+
+function issueClientSecret(clientId) {
+  const secrets = readClientSecrets()
+  const existing = secrets.get(clientId)
+  if (existing) return existing
+  const secret = randomBytes(24).toString('hex')
+  fs.mkdirSync(DATA_DIR, { recursive: true })
+  fs.appendFileSync(CLIENT_SECRETS_FILE, JSON.stringify({ clientId, secret }) + '\n')
+  return secret
+}
+
+function validClientSignature(clientId, signature) {
+  const secrets = readClientSecrets()
+  const secret = secrets.get(clientId)
+  if (!secret || !signature) return false
+  const expected = createHmac('sha256', secret).update(clientId).digest('hex')
+  const provided = String(signature)
+  if (provided.length !== expected.length) return false
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(provided))
+}
+
+function ipHash(ip) {
+  return createHash('sha256').update(String(ip)).digest('hex').slice(0, 32)
 }
 
 const APP_MESSAGES_FILE = path.join(DATA_DIR, 'app-messages.json')
@@ -60,7 +105,6 @@ function readAppMessages() {
 function send(res, code, body) {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
     'Cache-Control': 'no-store',
   })
   res.end(JSON.stringify(body))
@@ -177,7 +221,9 @@ function updateSuggestion(id, patch) {
     if (!line.trim()) return line
     const record = JSON.parse(line)
     if (record.id !== id) return line
-    Object.assign(record, patch)
+    for (const key of ['reply', 'repliedAt', 'processed', 'favorite', 'archived']) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) record[key] = patch[key]
+    }
     updated = true
     return JSON.stringify(record)
   })
@@ -193,7 +239,6 @@ function updateSuggestion(id, patch) {
 const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     })
@@ -210,8 +255,13 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && pathname === '/api/suggestions') {
     const clientId = String(requestUrl.searchParams.get('clientId') || '').trim().slice(0, 100)
+    const signature = String(requestUrl.searchParams.get('sig') || '')
     if (clientId.length === 0) {
       send(res, 400, { ok: false, error: 'clientId is required' })
+      return
+    }
+    if (!validClientSignature(clientId, signature)) {
+      send(res, 401, { ok: false, error: 'unauthorized' })
       return
     }
     try {
@@ -262,6 +312,7 @@ const server = http.createServer((req, res) => {
       send(res, 400, { ok: false, error: 'clientId is required' })
       return
     }
+    const clientSecret = issueClientSecret(clientId)
     const record = {
       id: randomUUID(),
       clientId,
@@ -274,11 +325,11 @@ const server = http.createServer((req, res) => {
       receivedAt: Date.now(),
       reply: '',
       repliedAt: null,
-      ip: clientIp,
+      ipHash: ipHash(clientIp),
     }
     try {
       appendSuggestion(record)
-      send(res, 200, { ok: true, suggestion: record })
+      send(res, 200, { ok: true, suggestion: record, secret: clientSecret })
     } catch (error) {
       console.error('failed to store suggestion', error)
       send(res, 500, { ok: false, error: 'storage failed' })

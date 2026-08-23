@@ -12,4 +12,10 @@ class SuggestionStore(context: Context) {
             prefs.edit().putString("client_id", id).apply()
         }
     }
+
+    fun clientSecret(): String = prefs.getString("client_secret", "").orEmpty()
+
+    fun saveClientSecret(secret: String) {
+        prefs.edit().putString("client_secret", secret).apply()
+    }
 }

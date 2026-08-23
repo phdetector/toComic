@@ -21,11 +21,21 @@ object AppMessagesApi {
                 connection.readTimeout = 15_000
 
                 val code = connection.responseCode
-                val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                    .orEmpty()
-                if (code !in 200..299) error("message server returned $code $body")
+                val stream = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                val body = stream?.use { input ->
+                    val buffer = ByteArray(8192)
+                    val output = java.io.ByteArrayOutputStream()
+                    var total = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > 1024 * 1024) error("response too large")
+                        output.write(buffer, 0, read)
+                    }
+                    output.toString(Charsets.UTF_8.name())
+                }.orEmpty()
+                if (code !in 200..299) error("message server returned $code")
 
                 val root = JSONObject(body)
                 val notices = buildList {

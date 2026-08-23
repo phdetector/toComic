@@ -7,9 +7,37 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 object SuggestionApi {
     const val ENDPOINT = "http://101.37.21.166/api/suggestions"
+    private const val MAX_RESPONSE_BYTES = 1024 * 1024
+
+    private fun readLimited(connection: HttpURLConnection): String {
+        val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+        stream ?: return ""
+        return stream.use { input ->
+            val buffer = ByteArray(8192)
+            val output = java.io.ByteArrayOutputStream()
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > MAX_RESPONSE_BYTES) error("response too large")
+                output.write(buffer, 0, read)
+            }
+            output.toString(Charsets.UTF_8.name())
+        }
+    }
+
+    private fun signature(clientId: String, secret: String): String {
+        if (secret.isBlank()) return ""
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        return mac.doFinal(clientId.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
 
     suspend fun submit(
         clientId: String,
@@ -18,7 +46,7 @@ object SuggestionApi {
         appVersion: String,
         deviceModel: String,
         androidVersion: String
-    ): Result<Unit> = withContext(Dispatchers.IO) {
+    ): Result<String?> = withContext(Dispatchers.IO) {
         runCatching {
             val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
             try {
@@ -42,34 +70,30 @@ object SuggestionApi {
                     stream.write(payload.toByteArray(Charsets.UTF_8))
                 }
 
+                val body = readLimited(connection)
                 val code = connection.responseCode
-                val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                    .orEmpty()
-                if (code !in 200..299) error("suggestion server returned $code $body")
+                if (code !in 200..299) error("suggestion server returned $code")
                 if (!JSONObject(body).optBoolean("ok")) error("suggestion server rejected request")
+                JSONObject(body).optString("secret").takeIf { it.isNotBlank() }
             } finally {
                 connection.disconnect()
             }
         }
     }
 
-    suspend fun list(clientId: String): Result<List<Suggestion>> = withContext(Dispatchers.IO) {
+    suspend fun list(clientId: String, secret: String): Result<List<Suggestion>> = withContext(Dispatchers.IO) {
         runCatching {
             val query = URLEncoder.encode(clientId, Charsets.UTF_8.name())
-            val connection = URL("$ENDPOINT?clientId=$query").openConnection() as HttpURLConnection
+            val sig = URLEncoder.encode(signature(clientId, secret), Charsets.UTF_8.name())
+            val connection = URL("$ENDPOINT?clientId=$query&sig=$sig").openConnection() as HttpURLConnection
             try {
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 15_000
                 connection.readTimeout = 15_000
 
+                val body = readLimited(connection)
                 val code = connection.responseCode
-                val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                    .orEmpty()
-                if (code !in 200..299) error("suggestion server returned $code $body")
+                if (code !in 200..299) error("suggestion server returned $code")
 
                 val root = JSONObject(body)
                 if (!root.optBoolean("ok")) error("suggestion server rejected request")

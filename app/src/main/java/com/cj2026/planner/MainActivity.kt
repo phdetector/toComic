@@ -624,6 +624,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
                     androidVersion = Build.VERSION.RELEASE
                 )
                 if (result.isSuccess) {
+                    result.getOrNull()?.takeIf { it.isNotBlank() }?.let { suggestionStore.saveClientSecret(it) }
                     snackbar.showSnackbar("建议已提交")
                 } else {
                     snackbar.showSnackbar("提交失败, 请检查网络后重试")
@@ -639,15 +640,16 @@ private fun MySuggestionsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val suggestionStore = remember { SuggestionStore(context) }
     val clientId = remember { suggestionStore.clientId() }
+    val clientSecret = remember { suggestionStore.clientSecret() }
     var suggestions by remember { mutableStateOf<List<Suggestion>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var loadFailed by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableStateOf(0) }
 
-    LaunchedEffect(clientId, refreshKey) {
+    LaunchedEffect(clientId, clientSecret, refreshKey) {
         loading = true
         loadFailed = false
-        SuggestionApi.list(clientId)
+        SuggestionApi.list(clientId, clientSecret)
             .onSuccess { suggestions = it }
             .onFailure { loadFailed = true }
         loading = false
@@ -982,7 +984,7 @@ private fun SuggestionDialog(
             )
             OutlinedTextField(
                 value = title,
-                onValueChange = { title = normalize(it) },
+                onValueChange = { title = normalize(sanitizeLength(it, 200)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
@@ -994,7 +996,7 @@ private fun SuggestionDialog(
             )
             OutlinedTextField(
                 value = content,
-                onValueChange = { content = normalize(it) },
+                onValueChange = { content = normalize(sanitizeLength(it, 5000)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(160.dp),
@@ -1161,7 +1163,7 @@ private fun DeclarationDialog(onDecline: () -> Unit, onAccept: () -> Unit) {
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "本应用正处于测试阶段, 尚有很多不完美的地方, 欢迎您的反馈",
+                    text = "本应用正处于测试阶段, 尚有很多不完美的地方, 欢迎您的反馈\n提交建议时会发送建议内容, 应用版本与设备型号; 服务器仅保存 IP 的哈希值用于限流与安全审计",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2122,7 +2124,7 @@ private fun BoothCard(
                 if (editing) {
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { name = it },
+                        onValueChange = { name = sanitizeLength(it, 100) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         shape = RoundedCornerShape(16.dp)
@@ -2158,12 +2160,16 @@ private fun BoothCard(
                         if (editing) {
                             val startValid = timePartsValid(startHour, startMin, allow2400 = false)
                             val endValid = timePartsValid(endHour, endMin, allow2400 = true)
-                            if (startValid && endValid) {
+                            val startTime = composeTime(startHour, startMin)
+                            val endTime = composeTime(endHour, endMin)
+                            val inverted = startValid && endValid &&
+                                startTime.isNotBlank() && endTime.isNotBlank() && startTime > endTime
+                            if (startValid && endValid && !inverted) {
                                 onSave(
                                     name,
                                     note,
-                                    composeTime(startHour, startMin),
-                                    composeTime(endHour, endMin)
+                                    startTime,
+                                    endTime
                                 )
                                 timeError = false
                                 editing = false
@@ -2216,8 +2222,8 @@ private fun BoothCard(
                         TimeFieldPair(
                             hour = startHour,
                             minute = startMin,
-                            onHourChange = { startHour = sanitizeDigits(it) },
-                            onMinuteChange = { startMin = sanitizeDigits(it) }
+                            onHourChange = { startHour = sanitizeHour(it, 23) },
+                            onMinuteChange = { startMin = sanitizeMinute(it) }
                         )
                         Text(
                             text = "至",
@@ -2228,8 +2234,8 @@ private fun BoothCard(
                         TimeFieldPair(
                             hour = endHour,
                             minute = endMin,
-                            onHourChange = { endHour = sanitizeDigits(it) },
-                            onMinuteChange = { endMin = sanitizeDigits(it) }
+                            onHourChange = { endHour = sanitizeHour(it, 24) },
+                            onMinuteChange = { endMin = sanitizeMinute(it) }
                         )
                         if (timeError) {
                             Text(
@@ -2262,7 +2268,7 @@ private fun BoothCard(
                 if (editing) {
                     OutlinedTextField(
                         value = note,
-                        onValueChange = { note = it },
+                        onValueChange = { note = sanitizeLength(it, 500) },
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight(),
@@ -2346,6 +2352,17 @@ private fun TimeDigitField(value: String, onValueChange: (String) -> Unit) {
 }
 
 private fun sanitizeDigits(raw: String): String = raw.filter { it.isDigit() }.take(2)
+
+private fun sanitizeLength(raw: String, max: Int): String = raw.take(max)
+
+private fun sanitizeHour(raw: String, max: Int): String {
+    val digits = raw.filter { it.isDigit() }.take(2)
+    if (digits.isEmpty()) return ""
+    val value = digits.toIntOrNull() ?: return ""
+    return if (value > max) max.toString().padStart(2, '0') else digits
+}
+
+private fun sanitizeMinute(raw: String): String = sanitizeHour(raw, 59)
 
 private fun composeTime(hour: String, minute: String): String =
     if (hour.isBlank() && minute.isBlank()) "" else "${hour.padStart(2, '0')}:${minute.padStart(2, '0')}"
@@ -2494,7 +2511,7 @@ private fun AddProjectDialog(
             )
             OutlinedTextField(
                 value = title,
-                onValueChange = { title = normalize(it) },
+                onValueChange = { title = normalize(sanitizeLength(it, 100)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
@@ -2506,7 +2523,7 @@ private fun AddProjectDialog(
             )
             OutlinedTextField(
                 value = year,
-                onValueChange = { year = normalize(it) },
+                onValueChange = { year = normalize(sanitizeLength(it, 40)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
@@ -2518,7 +2535,7 @@ private fun AddProjectDialog(
             )
             OutlinedTextField(
                 value = subtitle,
-                onValueChange = { subtitle = normalize(it) },
+                onValueChange = { subtitle = normalize(sanitizeLength(it, 100)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
@@ -2530,7 +2547,7 @@ private fun AddProjectDialog(
             )
             OutlinedTextField(
                 value = note,
-                onValueChange = { note = normalize(it) },
+                onValueChange = { note = normalize(sanitizeLength(it, 500)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(112.dp),
@@ -2601,7 +2618,7 @@ private fun AddBoothDialog(
             )
             OutlinedTextField(
                 value = hallId,
-                onValueChange = { hallId = normalize(it) },
+                onValueChange = { hallId = normalize(sanitizeLength(it, 20)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
@@ -2613,7 +2630,7 @@ private fun AddBoothDialog(
             )
             OutlinedTextField(
                 value = boothCode,
-                onValueChange = { boothCode = normalize(it) },
+                onValueChange = { boothCode = normalize(sanitizeLength(it, 20)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
@@ -2625,7 +2642,7 @@ private fun AddBoothDialog(
             )
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = normalize(it) },
+                onValueChange = { name = normalize(sanitizeLength(it, 100)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
@@ -2637,7 +2654,7 @@ private fun AddBoothDialog(
             )
             OutlinedTextField(
                 value = note,
-                onValueChange = { note = normalize(it) },
+                onValueChange = { note = normalize(sanitizeLength(it, 500)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(112.dp),

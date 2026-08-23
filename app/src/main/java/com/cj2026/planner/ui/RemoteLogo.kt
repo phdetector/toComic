@@ -4,6 +4,7 @@ package com.cj2026.planner.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -32,19 +33,21 @@ import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 
-private val imageCache = mutableStateMapOf<String, Bitmap>()
+private val imageCache = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+}
 private val loadingUrls = mutableStateMapOf<String, Boolean>()
 private val logoDispatcher = Dispatchers.IO.limitedParallelism(4)
 
 @Composable
 fun RemoteLogo(url: String?, label: String, modifier: Modifier = Modifier) {
     val resolvedUrl = url ?: logoUrlFor(label)
-    var bitmap by remember(resolvedUrl) { mutableStateOf(resolvedUrl?.let { imageCache[it] }) }
+    var bitmap by remember(resolvedUrl) { mutableStateOf(resolvedUrl?.let { imageCache.get(it) }) }
     LaunchedEffect(resolvedUrl) {
         val target = resolvedUrl ?: return@LaunchedEffect
         if (bitmap == null && loadingUrls[target] != true) {
             loadingUrls[target] = true
-            bitmap = runCatching { loadBitmap(target) }.getOrNull()?.also { imageCache[target] = it }
+            bitmap = runCatching { loadBitmap(target) }.getOrNull()?.also { imageCache.put(target, it) }
             loadingUrls[target] = false
         }
     }
@@ -82,7 +85,31 @@ private suspend fun loadBitmap(url: String): Bitmap? = withContext(logoDispatche
         instanceFollowRedirects = true
     }
     if (connection.responseCode !in 200..299) return@withContext null
-    connection.inputStream.use { BitmapFactory.decodeStream(it) }
+    val bytes = connection.inputStream.use { input ->
+        val buffer = ByteArray(8192)
+        val output = java.io.ByteArrayOutputStream()
+        var total = 0
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            if (total > 1024 * 1024) return@withContext null
+            output.write(buffer, 0, read)
+        }
+        output.toByteArray()
+    }
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= 144 && bounds.outHeight / (sample * 2) >= 84) {
+        sample *= 2
+    }
+    BitmapFactory.decodeByteArray(
+        bytes,
+        0,
+        bytes.size,
+        BitmapFactory.Options().apply { inSampleSize = sample }
+    )
 }
 
 private fun logoUrlFor(label: String): String? {

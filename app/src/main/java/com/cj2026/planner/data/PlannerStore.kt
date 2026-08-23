@@ -40,10 +40,12 @@ class PlannerStore(
         buildExportJson(snapshot.normalized().forExport(keepFavorites)).toString(2)
 
     suspend fun importFrom(uri: Uri): PlannerSnapshot = withContext(Dispatchers.IO) {
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+        descriptor?.use { file ->
+            if (file.statSize > 5 * 1024 * 1024) error("import file too large")
+        }
         val text = context.contentResolver.openInputStream(uri)?.use { stream ->
-            val bytes = stream.readBytes()
-            if (bytes.size > 5 * 1024 * 1024) error("import file too large")
-            bytes.toString(Charsets.UTF_8)
+            stream.readBytes().toString(Charsets.UTF_8)
         }.orEmpty()
         parseSnapshotJson(text)
     }
