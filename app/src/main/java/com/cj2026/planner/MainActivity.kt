@@ -1307,7 +1307,8 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
     var showAddBooth by remember(project.id) { mutableStateOf(false) }
     var sortMode by remember(project.id) { mutableStateOf(SortMode.Default) }
 
-    fun currentSnapshot(): PlannerSnapshot = PlannerSnapshot(states.toMap(), customBooths.toList())
+    fun currentSnapshot(): PlannerSnapshot =
+        PlannerSnapshot(states.toMap(), customBooths.toList(), project.booths)
 
     fun saveSnapshot() {
         store.saveSnapshot(currentSnapshot())
@@ -1355,6 +1356,25 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
         snapshot.states.values.any { it.planned } || snapshot.customBooths.any { it.planned }
 
     fun applyImported(imported: PlannerSnapshot, conflict: ImportConflict) {
+        imported.booths.forEach { booth ->
+            if (booth.id !in officialBoothIds && customBooths.none { it.id == booth.id }) {
+                val importedState = imported.states[booth.id] ?: BoothState()
+                customBooths.add(
+                    CustomBooth(
+                        id = booth.id,
+                        hallId = booth.hallId,
+                        boothCode = booth.boothCode,
+                        name = booth.name,
+                        note = importedState.note,
+                        planned = importedState.planned,
+                        planOrder = importedState.planOrder,
+                        startTime = importedState.startTime,
+                        endTime = importedState.endTime,
+                        completed = importedState.completed
+                    )
+                )
+            }
+        }
         val validStateIds = officialBoothIds + customBooths.map { it.id }
         when (conflict) {
             ImportConflict.KeepExisting -> {
@@ -1407,6 +1427,7 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
             }
         }
         saveSnapshot()
+        currentHall = null
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -1491,6 +1512,7 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                 searching = searching,
                 query = query,
                 sortMode = sortMode,
+                emptyHallLabel = if (project.halls.isEmpty()) "未设置展馆" else "全部展馆",
                 onQueryChange = { query = store.normalizePunctuation(it) },
                 onBackClick = onBack,
                 onHallClick = { showHallPicker = true },
@@ -1794,6 +1816,7 @@ private fun TopBar(
     searching: Boolean,
     query: String,
     sortMode: SortMode,
+    emptyHallLabel: String = "未设置展馆",
     onQueryChange: (String) -> Unit,
     onHallClick: () -> Unit,
     onBackClick: (() -> Unit)? = null,
@@ -1831,7 +1854,7 @@ private fun TopBar(
                     }
                 }
                 Capsule(
-                    text = hall?.let(::hallLabel) ?: "未设置展馆",
+                    text = hall?.let(::hallLabel) ?: emptyHallLabel,
                     color = hall?.let { Color(it.accent) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                     onClick = onHallClick
@@ -2362,7 +2385,7 @@ private fun HallPicker(
     halls: List<Hall>,
     current: Hall?,
     onDismiss: () -> Unit,
-    onPick: (Hall) -> Unit
+    onPick: (Hall?) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -2390,6 +2413,20 @@ private fun HallPicker(
                     modifier = Modifier.padding(8.dp)
                 )
             } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(if (current == null) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
+                        .pressScale()
+                        .clickable { onPick(null) }
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("全部展馆", fontWeight = FontWeight.SemiBold)
+                    Text("查看本项目所有展台", color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
                 halls.forEach { hall ->
                     Row(
                         modifier = Modifier

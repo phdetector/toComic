@@ -2,6 +2,7 @@ package com.cj2026.planner.data
 
 import android.content.Context
 import android.net.Uri
+import com.cj2026.planner.model.Booth
 import com.cj2026.planner.model.BoothState
 import com.cj2026.planner.model.CustomBooth
 import com.cj2026.planner.model.PlannerSnapshot
@@ -92,10 +93,23 @@ class PlannerStore(
                 })
             }
 
+        val booths = JSONArray()
+        snapshot.booths.sortedWith(compareBy<Booth> { it.hallId }.thenBy { it.boothCode }.thenBy { it.name })
+            .forEach { booth ->
+                booths.put(JSONObject().apply {
+                    put("id", booth.id)
+                    put("hallId", booth.hallId)
+                    put("boothCode", booth.boothCode)
+                    put("name", booth.name)
+                    put("logoUrl", booth.logoUrl ?: JSONObject.NULL)
+                })
+            }
+
         return JSONObject().apply {
-            put("version", 3)
+            put("version", 4)
             put("items", items)
             put("customBooths", customBooths)
+            put("booths", booths)
         }
     }
 
@@ -104,8 +118,29 @@ class PlannerStore(
         val root = JSONObject(raw)
         return PlannerSnapshot(
             states = parseStates(root.optJSONArray("items") ?: JSONArray()),
-            customBooths = parseCustomBooths(root.optJSONArray("customBooths") ?: JSONArray())
+            customBooths = parseCustomBooths(root.optJSONArray("customBooths") ?: JSONArray()),
+            booths = parseBooths(root.optJSONArray("booths") ?: JSONArray())
         ).normalized()
+    }
+
+    private fun parseBooths(items: JSONArray): List<Booth> {
+        val result = linkedMapOf<String, Booth>()
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val id = item.optString("id").trim()
+            val hallId = item.optString("hallId").trim().uppercase()
+            val boothCode = item.optString("boothCode").trim()
+            val name = item.optString("name").trim()
+            if (id.isBlank() || hallId.isBlank() || boothCode.isBlank() || name.isBlank()) continue
+            result[id] = Booth(
+                id = id,
+                hallId = hallId,
+                boothCode = boothCode,
+                name = name,
+                logoUrl = item.optString("logoUrl", "").takeIf { it.isNotBlank() && it != "null" }
+            )
+        }
+        return result.values.toList()
     }
 
     private fun parseStates(items: JSONArray): Map<String, BoothState> {
@@ -185,7 +220,7 @@ class PlannerStore(
                 completed = current.completed || booth.completed
             )
         }
-        return PlannerSnapshot(normalizedStates, normalizedCustomBooths)
+        return PlannerSnapshot(normalizedStates, normalizedCustomBooths, booths)
     }
 
     private fun PlannerSnapshot.forExport(keepFavorites: Boolean): PlannerSnapshot {
@@ -201,7 +236,7 @@ class PlannerStore(
                 completed = false
             )
         }
-        return PlannerSnapshot(exportedStates, exportedCustomBooths)
+        return PlannerSnapshot(exportedStates, exportedCustomBooths, booths)
     }
 
     private fun normalizeStateKeys(states: Map<String, BoothState>): Map<String, BoothState> {

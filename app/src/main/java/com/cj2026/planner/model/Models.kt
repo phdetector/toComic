@@ -50,7 +50,8 @@ data class CustomBooth(
 
 data class PlannerSnapshot(
     val states: Map<String, BoothState> = emptyMap(),
-    val customBooths: List<CustomBooth> = emptyList()
+    val customBooths: List<CustomBooth> = emptyList(),
+    val booths: List<Booth> = emptyList()
 )
 
 data class BoothUi(
