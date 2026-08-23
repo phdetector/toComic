@@ -24,6 +24,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -94,6 +95,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -565,6 +567,34 @@ private fun SettingsScreen(onBack: () -> Unit) {
                         )
                     }
                 }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                    ) {
+                        CreditRow(
+                            name = "phdetectar",
+                            intro = "主要开发",
+                            imageRes = R.drawable.me
+                        )
+                        CreditRow(
+                            name = "deepseek",
+                            intro = "主要开发",
+                            imageRes = R.drawable.deepseek
+                        )
+                        CreditRow(
+                            name = "opus5",
+                            intro = "安全和钱包最严厉的父亲",
+                            imageRes = R.drawable.claude
+                        )
+                    }
+                }
             }
             SnackbarHost(
                 hostState = snackbar,
@@ -769,6 +799,38 @@ private fun ImportSettingsScreen(onBack: () -> Unit) {
                 selectedMode = null
                 appPrefs.importConflictMode = null
             }
+        }
+    }
+}
+
+@Composable
+private fun CreditRow(name: String, intro: String, imageRes: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Image(
+            painter = painterResource(imageRes),
+            contentDescription = name,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape),
+            contentScale = ContentScale.Crop
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = intro,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -2118,9 +2180,9 @@ private fun BoothCard(
             ) {
                 Column(
                     modifier = Modifier
-                        .width(88.dp)
+                        .width(108.dp)
                         .fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (editing) {
@@ -2132,7 +2194,8 @@ private fun BoothCard(
                         )
                         Text(
                             text = "至",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         TimeFieldPair(
@@ -2157,7 +2220,8 @@ private fun BoothCard(
                         )
                         Text(
                             text = "至",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
@@ -2211,48 +2275,47 @@ private fun TimeFieldPair(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        BasicTextField(
-            value = hour,
-            onValueChange = onHourChange,
-            modifier = Modifier.width(30.dp),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = CodeFont, textAlign = TextAlign.Center),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            decorationBox = { inner ->
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(vertical = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) { inner() }
-            }
-        )
+        TimeDigitField(value = hour, onValueChange = onHourChange)
         Text(
             text = ":",
-            style = MaterialTheme.typography.labelMedium.copy(fontFamily = CodeFont),
+            style = MaterialTheme.typography.titleMedium.copy(fontFamily = CodeFont),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        BasicTextField(
-            value = minute,
-            onValueChange = onMinuteChange,
-            modifier = Modifier.width(30.dp),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = CodeFont, textAlign = TextAlign.Center),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            decorationBox = { inner ->
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(vertical = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) { inner() }
-            }
-        )
+        TimeDigitField(value = minute, onValueChange = onMinuteChange)
     }
+}
+
+@Composable
+private fun TimeDigitField(value: String, onValueChange: (String) -> Unit) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.width(38.dp),
+        singleLine = true,
+        textStyle = MaterialTheme.typography.titleSmall.copy(fontFamily = CodeFont, textAlign = TextAlign.Center),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        decorationBox = { inner ->
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (value.isEmpty()) {
+                    Text(
+                        text = "00",
+                        style = MaterialTheme.typography.titleSmall.copy(fontFamily = CodeFont),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    inner()
+                }
+            }
+        }
+    )
 }
 
 private fun sanitizeDigits(raw: String): String = raw.filter { it.isDigit() }.take(2)
