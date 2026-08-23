@@ -27,6 +27,7 @@ Thumbs.db
 # Admin secrets
 /admin/.admin-secret.json
 /admin/admin-credentials.json
+/admin/admin-secret.env
 
 # Stray zero-byte artifacts from the font download step
 /serif

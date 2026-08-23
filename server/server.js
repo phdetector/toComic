@@ -110,7 +110,19 @@ function appendSuggestion(record) {
 const ADMIN_PORT = 37795
 const ADMIN_CREDENTIALS_FILE = path.join(DATA_DIR, 'admin-credentials.json')
 const ADMIN_TOKEN_TTL_MS = 30 * 60 * 1000
+const ADMIN_LOGIN_MAX_FAILURES = 5
+const ADMIN_LOGIN_LOCK_MS = 15 * 60 * 1000
 const adminTokens = new Map()
+const adminLoginFailures = new Map()
+
+function adminSecret() {
+  const secret = process.env.EXPO_ADMIN_SECRET
+  if (!secret) {
+    console.error('EXPO_ADMIN_SECRET is required')
+    process.exit(1)
+  }
+  return secret
+}
 
 function readAdminCredentials() {
   const raw = fs.readFileSync(ADMIN_CREDENTIALS_FILE, 'utf8')
@@ -119,9 +131,8 @@ function readAdminCredentials() {
 }
 
 function issueAdminToken(username) {
-  const secret = process.env.EXPO_ADMIN_SECRET || 'expo-admin-local-secret'
   const expiry = Date.now() + ADMIN_TOKEN_TTL_MS
-  const token = createHmac('sha256', secret).update(`${username}:${expiry}`).digest('hex')
+  const token = createHmac('sha256', adminSecret()).update(`${username}:${expiry}`).digest('hex')
   adminTokens.set(token, expiry)
   return token
 }
@@ -137,6 +148,26 @@ function verifyAdmin(req) {
     return false
   }
   return true
+}
+
+function loginAttempts(ip) {
+  const state = adminLoginFailures.get(ip)
+  if (!state) return { count: 0, lockedUntil: 0 }
+  return state
+}
+
+function recordLoginFailure(ip) {
+  const state = adminLoginFailures.get(ip) || { count: 0, lockedUntil: 0 }
+  state.count += 1
+  if (state.count >= ADMIN_LOGIN_MAX_FAILURES) {
+    state.lockedUntil = Date.now() + ADMIN_LOGIN_LOCK_MS
+    state.count = 0
+  }
+  adminLoginFailures.set(ip, state)
+}
+
+function clearLoginFailures(ip) {
+  adminLoginFailures.delete(ip)
 }
 
 function updateSuggestion(id, patch) {
@@ -274,6 +305,12 @@ const adminServer = http.createServer((req, res) => {
 
   if (req.method === 'POST' && pathname === '/admin/login') {
     readBody(req, raw => {
+      const ip = String(req.socket.remoteAddress || '').slice(0, 100)
+      const attempts = loginAttempts(ip)
+      if (attempts.lockedUntil > Date.now()) {
+        send(res, 429, { ok: false, error: 'too many attempts' })
+        return
+      }
       let data
       try {
         data = JSON.parse(raw)
@@ -289,9 +326,11 @@ const adminServer = http.createServer((req, res) => {
         const expected = Buffer.from(credentials.hash, 'hex')
         if (username !== credentials.username || candidate.length !== expected.length
           || !timingSafeEqual(candidate, expected)) {
+          recordLoginFailure(ip)
           send(res, 401, { ok: false, error: 'invalid credentials' })
           return
         }
+        clearLoginFailures(ip)
         send(res, 200, { ok: true, token: issueAdminToken(username) })
       } catch (error) {
         console.error('admin login failed', error)
@@ -360,6 +399,11 @@ const adminServer = http.createServer((req, res) => {
   send(res, 404, { ok: false, error: 'not found' })
 })
 
-adminServer.listen(ADMIN_PORT, '0.0.0.0', () => {
-  console.log('expo admin listening on 0.0.0.0:' + ADMIN_PORT)
+if (!process.env.EXPO_ADMIN_SECRET) {
+  console.error('EXPO_ADMIN_SECRET is required')
+  process.exit(1)
+}
+
+adminServer.listen(ADMIN_PORT, '127.0.0.1', () => {
+  console.log('expo admin listening on 127.0.0.1:' + ADMIN_PORT)
 })

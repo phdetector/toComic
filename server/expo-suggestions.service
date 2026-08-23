@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+EnvironmentFile=/var/lib/expo-suggestions/admin-secret.env
 ExecStart=/usr/bin/node /opt/expo-suggestions/server.js
 Restart=always
 RestartSec=3

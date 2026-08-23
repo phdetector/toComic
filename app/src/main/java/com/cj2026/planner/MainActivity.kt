@@ -175,7 +175,11 @@ private fun AppRoot() {
 
     if (showDeclaration) {
         DeclarationDialog(
-            onDecline = { (context as? Activity)?.finish() },
+            onDecline = {
+                val activity = context as? Activity
+                activity?.finishAffinity()
+                activity?.finish()
+            },
             onAccept = {
                 appPrefs.declarationAccepted = true
                 showDeclaration = false
@@ -362,7 +366,7 @@ private fun AppRoot() {
             onDismiss = { updateInfo = null },
             onConfirm = {
                 val url = update.url.takeIf {
-                    it.isNotBlank() && (it.startsWith("https://") || it.startsWith("http://"))
+                    it.isNotBlank() && it.startsWith("https://")
                 } ?: return@MessageDialog
                 runCatching {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -1088,7 +1092,7 @@ private fun MessageDialog(
     onDismiss: (() -> Unit)? = null,
     onConfirm: () -> Unit
 ) {
-    Dialog(onDismissRequest = { onDismiss?.invoke() ?: onConfirm() }) {
+    Dialog(onDismissRequest = { if (dismissLabel != null) onDismiss?.invoke() }) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()

@@ -42,13 +42,18 @@ object AppMessagesApi {
                     }
                 }
                 val update = root.optJSONObject("update")?.takeUnless { it == JSONObject.NULL }?.let { item ->
-                    AppUpdate(
-                        versionCode = item.optInt("versionCode"),
-                        versionName = item.optString("versionName"),
-                        title = item.optString("title"),
-                        body = item.optString("body"),
-                        url = item.optString("url")
-                    )
+                    val versionCode = item.optInt("versionCode")
+                    if (versionCode !in 1..99_999) {
+                        null
+                    } else {
+                        AppUpdate(
+                            versionCode = versionCode,
+                            versionName = item.optString("versionName").take(40),
+                            title = item.optString("title").take(200),
+                            body = item.optString("body").take(2000),
+                            url = item.optString("url").takeIf { it.startsWith("https://") }.orEmpty()
+                        )
+                    }
                 }
                 AppMessages(notices = notices.filter { it.id.isNotBlank() }, update = update)
             } finally {
