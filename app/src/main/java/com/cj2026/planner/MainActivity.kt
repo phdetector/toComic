@@ -56,6 +56,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -102,6 +103,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -564,23 +566,6 @@ private fun SettingsScreen(onBack: () -> Unit) {
                         )
                     }
                 }
-                Spacer(Modifier.weight(1f))
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        CreditRow("phdetectar", "主要开发")
-                        CreditRow("deepseek", "主要开发")
-                        CreditRow("opus5", "安全和钱包最严厉的父亲")
-                    }
-                }
             }
             SnackbarHost(
                 hostState = snackbar,
@@ -794,45 +779,8 @@ private fun ImportSettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun CreditRow(name: String, intro: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = name.firstOrNull()?.uppercase() ?: "?",
-                style = MaterialTheme.typography.titleMedium.copy(fontFamily = CodeFont),
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = intro,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun ImportConflictOption(label: String, selected: Boolean, onSelect: () -> Unit) {    Surface(
+private fun ImportConflictOption(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .pressScale()
@@ -1351,17 +1299,27 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
 
     fun applyImported(imported: PlannerSnapshot, conflict: ImportConflict) {
         val validStateIds = officialBoothIds + customBooths.map { it.id }
-        val existingCustomIds = customBooths.map { it.id }.toSet()
         when (conflict) {
             ImportConflict.KeepExisting -> {
                 imported.states.forEach { (id, state) ->
-                    if (id in validStateIds && id !in states) {
-                        states[id] = state
-                        syncCustomBoothState(id, state)
+                    if (id in validStateIds) {
+                        val previous = states[id]
+                        if (previous == null) {
+                            states[id] = state
+                        } else {
+                            states[id] = previous.copy(planned = state.planned, planOrder = state.planOrder)
+                        }
+                        syncCustomBoothState(id, states[id] ?: state)
                     }
                 }
                 imported.customBooths.forEach { booth ->
-                    if (booth.id !in existingCustomIds) customBooths.add(booth)
+                    val index = customBooths.indexOfFirst { it.id == booth.id }
+                    if (index < 0) {
+                        customBooths.add(booth)
+                    } else {
+                        val current = customBooths[index]
+                        customBooths[index] = current.copy(planned = booth.planned, planOrder = booth.planOrder)
+                    }
                 }
             }
             ImportConflict.OverwriteWithNotes -> {
@@ -1770,7 +1728,7 @@ private fun TopBar(
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             if (searching) {
                 OutlinedTextField(
@@ -1973,8 +1931,10 @@ private fun BoothCard(
     var editing by remember(item.booth.id) { mutableStateOf(false) }
     var name by remember(item.displayName) { mutableStateOf(item.displayName) }
     var note by remember(item.state.note) { mutableStateOf(item.state.note) }
-    var startTime by remember(item.state.startTime) { mutableStateOf(item.state.startTime) }
-    var endTime by remember(item.state.endTime) { mutableStateOf(item.state.endTime) }
+    var startHour by remember(item.state.startTime.substringBefore(":")) { mutableStateOf(item.state.startTime.substringBefore(":")) }
+    var startMin by remember(item.state.startTime.substringAfter(":", "")) { mutableStateOf(item.state.startTime.substringAfter(":", "")) }
+    var endHour by remember(item.state.endTime.substringBefore(":")) { mutableStateOf(item.state.endTime.substringBefore(":")) }
+    var endMin by remember(item.state.endTime.substringAfter(":", "")) { mutableStateOf(item.state.endTime.substringAfter(":", "")) }
     var timeError by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val reduceMotion = remember { reduceMotionEnabled(context) }
@@ -2040,15 +2000,15 @@ private fun BoothCard(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Capsule(text = item.displayCode, color = MaterialTheme.colorScheme.primary, onClick = null)
                 if (editing) {
@@ -2088,14 +2048,14 @@ private fun BoothCard(
                 IconButton(
                     onClick = {
                         if (editing) {
-                            val startValid = startTime.isBlank() || isValidTime(startTime, allow2400 = false)
-                            val endValid = endTime.isBlank() || isValidTime(endTime, allow2400 = true)
+                            val startValid = timePartsValid(startHour, startMin, allow2400 = false)
+                            val endValid = timePartsValid(endHour, endMin, allow2400 = true)
                             if (startValid && endValid) {
                                 onSave(
                                     name,
                                     note,
-                                    normalizeTime(startTime),
-                                    normalizeTime(endTime)
+                                    composeTime(startHour, startMin),
+                                    composeTime(endHour, endMin)
                                 )
                                 timeError = false
                                 editing = false
@@ -2135,92 +2095,88 @@ private fun BoothCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(2f),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 RemoteLogo(url = item.booth.logoUrl, label = item.displayName)
                 Column(
                     modifier = Modifier
-                        .weight(1f)
+                        .width(88.dp)
                         .fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (editing) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = startTime,
-                                onValueChange = { startTime = sanitizeTimeInput(it) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp),
-                                placeholder = { Text("00:00") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                            Text(
-                                text = "至",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            OutlinedTextField(
-                                value = endTime,
-                                onValueChange = { endTime = sanitizeTimeInput(it) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp),
-                                placeholder = { Text("24:00") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                        }
+                        TimeFieldPair(
+                            hour = startHour,
+                            minute = startMin,
+                            onHourChange = { startHour = sanitizeDigits(it) },
+                            onMinuteChange = { startMin = sanitizeDigits(it) }
+                        )
+                        Text(
+                            text = "至",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TimeFieldPair(
+                            hour = endHour,
+                            minute = endMin,
+                            onHourChange = { endHour = sanitizeDigits(it) },
+                            onMinuteChange = { endMin = sanitizeDigits(it) }
+                        )
                         if (timeError) {
                             Text(
-                                text = "时间范围 00:00-24:00",
+                                text = "00:00-24:00",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error
                             )
                         }
-                        OutlinedTextField(
-                            value = note,
-                            onValueChange = { note = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            placeholder = { Text("备注") }
-                        )
                     } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f))
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = item.state.startTime.ifBlank { "--:--" },
-                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = CodeFont),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1
-                                )
-                                Text(
-                                    text = "至",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = item.state.endTime.ifBlank { "--:--" },
-                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = CodeFont),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1
-                                )
-                            }
-                        }
+                        Text(
+                            text = item.state.startTime.ifBlank { "--:--" },
+                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = CodeFont),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "至",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = item.state.endTime.ifBlank { "--:--" },
+                            style = MaterialTheme.typography.titleSmall.copy(fontFamily = CodeFont),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                    }
+                }
+                if (editing) {
+                    OutlinedTextField(
+                        value = note,
+                        onValueChange = { note = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        shape = RoundedCornerShape(12.dp),
+                        placeholder = { Text("备注") }
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f))
+                            .pressScale()
+                            .clickable { editing = true }
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = item.state.note,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -2228,26 +2184,73 @@ private fun BoothCard(
     }
 }
 
-private fun sanitizeTimeInput(raw: String): String {
-    val digits = raw.filter { it.isDigit() }.take(4)
-    return when {
-        digits.isEmpty() -> ""
-        digits.length <= 2 -> digits
-        else -> digits.take(2) + ":" + digits.drop(2).take(2)
+@Composable
+private fun TimeFieldPair(
+    hour: String,
+    minute: String,
+    onHourChange: (String) -> Unit,
+    onMinuteChange: (String) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        BasicTextField(
+            value = hour,
+            onValueChange = onHourChange,
+            modifier = Modifier.width(30.dp),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = CodeFont, textAlign = TextAlign.Center),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            decorationBox = { inner ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) { inner() }
+            }
+        )
+        Text(
+            text = ":",
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = CodeFont),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        BasicTextField(
+            value = minute,
+            onValueChange = onMinuteChange,
+            modifier = Modifier.width(30.dp),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = CodeFont, textAlign = TextAlign.Center),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            decorationBox = { inner ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) { inner() }
+            }
+        )
     }
 }
 
-private fun isValidTime(value: String, allow2400: Boolean): Boolean {
-    val match = Regex("(\\d{2}):(\\d{2})").matchEntire(value) ?: return false
-    val hour = match.groupValues[1].toInt()
-    val minute = match.groupValues[2].toInt()
-    if (minute > 59) return false
-    if (hour == 24) return allow2400 && minute == 0
-    return hour in 0..23
-}
+private fun sanitizeDigits(raw: String): String = raw.filter { it.isDigit() }.take(2)
 
-private fun normalizeTime(value: String): String =
-    if (value.isBlank()) "" else value.trim()
+private fun composeTime(hour: String, minute: String): String =
+    if (hour.isBlank() && minute.isBlank()) "" else "${hour.padStart(2, '0')}:${minute.padStart(2, '0')}"
+
+private fun timePartsValid(hour: String, minute: String, allow2400: Boolean): Boolean {
+    if (hour.isBlank() && minute.isBlank()) return true
+    if (hour.isBlank() || minute.isBlank()) return false
+    val hours = hour.toIntOrNull() ?: return false
+    val minutes = minute.toIntOrNull() ?: return false
+    if (minutes > 59) return false
+    if (hours == 24) return allow2400 && minutes == 0
+    return hours in 0..23
+}
 
 
 @Composable
@@ -2564,21 +2567,22 @@ private fun FileMenu(
 ) {
     var mode by remember { mutableStateOf(FileMode.Export) }
     var keepFavorites by remember { mutableStateOf(true) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-    ) {
-        Column(
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
+          Column(
+              modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(horizontal = 20.dp, vertical = 16.dp),
+              verticalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
             Text(
                 text = "数据文件",
                 style = MaterialTheme.typography.titleLarge,
@@ -2651,6 +2655,7 @@ private fun FileMenu(
                 }
             }
         }
+        }
     }
 }
 
@@ -2700,18 +2705,20 @@ private fun ImportConflictDialog(
     onRememberChange: (Boolean) -> Unit,
     onChoose: (ImportConflict) -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = { },
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-    ) {
+    Dialog(onDismissRequest = { }) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
@@ -2738,6 +2745,7 @@ private fun ImportConflictDialog(
             }
         }
     }
+}
 }
 
 @Composable
