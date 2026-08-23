@@ -11,8 +11,8 @@ android {
         applicationId = "com.cj2026.expo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
-        versionName = "0.0.12"
+        versionCode = 14
+        versionName = "0.0.13"
     }
 
     buildTypes {

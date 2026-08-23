@@ -130,7 +130,6 @@ import com.cj2026.planner.model.Suggestion
 import com.cj2026.planner.ui.ChinaJoyTheme
 import com.cj2026.planner.ui.CodeFont
 import com.cj2026.planner.ui.FavoriteRed
-import com.cj2026.planner.ui.RemoteLogo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -730,15 +729,7 @@ private suspend fun shareExportFile(context: Context, projectId: String, json: S
 private fun ImportSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val appPrefs = remember { AppPrefs(context) }
-    var selected by remember {
-        mutableStateOf(
-            when (appPrefs.importConflictMode) {
-                "overwrite_notes" -> ImportConflict.OverwriteWithNotes
-                "overwrite_no_notes" -> ImportConflict.OverwriteWithoutNotes
-                else -> ImportConflict.KeepExisting
-            }
-        )
-    }
+    var selectedMode by remember { mutableStateOf(appPrefs.importConflictMode) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -762,17 +753,21 @@ private fun ImportSettingsScreen(onBack: () -> Unit) {
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
             }
-            ImportConflictOption("保留已有数据", selected == ImportConflict.KeepExisting) {
-                selected = ImportConflict.KeepExisting
+            ImportConflictOption("保留已有数据", selectedMode == "keep") {
+                selectedMode = "keep"
                 appPrefs.importConflictMode = "keep"
             }
-            ImportConflictOption("覆盖已有数据(含备注)", selected == ImportConflict.OverwriteWithNotes) {
-                selected = ImportConflict.OverwriteWithNotes
+            ImportConflictOption("覆盖已有数据(含备注)", selectedMode == "overwrite_notes") {
+                selectedMode = "overwrite_notes"
                 appPrefs.importConflictMode = "overwrite_notes"
             }
-            ImportConflictOption("覆盖已有数据(不含备注)", selected == ImportConflict.OverwriteWithoutNotes) {
-                selected = ImportConflict.OverwriteWithoutNotes
+            ImportConflictOption("覆盖已有数据(不含备注)", selectedMode == "overwrite_no_notes") {
+                selectedMode = "overwrite_no_notes"
                 appPrefs.importConflictMode = "overwrite_no_notes"
+            }
+            ImportConflictOption("每次询问", selectedMode == null) {
+                selectedMode = null
+                appPrefs.importConflictMode = null
             }
         }
     }
@@ -1387,11 +1382,22 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                 }
             }
             if (!hasExisting) {
-                applyImported(effective, ImportConflict.OverwriteWithNotes)
-                snackbar.showSnackbar("已导入 ${effective.states.size + effective.customBooths.size} 条记录")
+                val applied = runCatching { applyImported(effective, ImportConflict.OverwriteWithNotes) }
+                snackbar.showSnackbar(
+                    if (applied.isSuccess) "已导入 ${effective.states.size + effective.customBooths.size} 条记录"
+                    else "导入失败: ${applied.exceptionOrNull()?.message ?: "未知错误"}"
+                )
             } else if (remembered != null) {
-                applyImported(effective, remembered)
-                snackbar.showSnackbar("已按导入设置导入 ${effective.states.size + effective.customBooths.size} 条记录")
+                val applied = runCatching { applyImported(effective, remembered) }
+                val strategy = when (remembered) {
+                    ImportConflict.KeepExisting -> "保留已有数据"
+                    ImportConflict.OverwriteWithNotes -> "覆盖已有数据(含备注)"
+                    ImportConflict.OverwriteWithoutNotes -> "覆盖已有数据(不含备注)"
+                }
+                snackbar.showSnackbar(
+                    if (applied.isSuccess) "已按[$strategy]导入 ${effective.states.size + effective.customBooths.size} 条记录"
+                    else "导入失败: ${applied.exceptionOrNull()?.message ?: "未知错误"}"
+                )
             } else {
                 pendingImport = effective
                 rememberImportChoice = false
@@ -1561,10 +1567,23 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                             ImportConflict.OverwriteWithNotes -> "overwrite_notes"
                             ImportConflict.OverwriteWithoutNotes -> "overwrite_no_notes"
                         }
+                    } else {
+                        appPrefs.importConflictMode = null
                     }
-                    applyImported(imported, conflict)
+                    val applied = runCatching { applyImported(imported, conflict) }
+                    val strategy = when (conflict) {
+                        ImportConflict.KeepExisting -> "保留已有数据"
+                        ImportConflict.OverwriteWithNotes -> "覆盖已有数据(含备注)"
+                        ImportConflict.OverwriteWithoutNotes -> "覆盖已有数据(不含备注)"
+                    }
                     scope.launch {
-                        snackbar.showSnackbar("已导入 ${imported.states.size + imported.customBooths.size} 条记录")
+                        snackbar.showSnackbar(
+                            if (applied.isSuccess) {
+                                "已按[$strategy]导入 ${imported.states.size + imported.customBooths.size} 条记录"
+                            } else {
+                                "导入失败: ${applied.exceptionOrNull()?.message ?: "未知错误"}"
+                            }
+                        )
                     }
                     showImportConflict = false
                     pendingImport = null
@@ -2097,7 +2116,6 @@ private fun BoothCard(
                     .weight(2f),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                RemoteLogo(url = item.booth.logoUrl, label = item.displayName)
                 Column(
                     modifier = Modifier
                         .width(88.dp)
@@ -2688,11 +2706,13 @@ private fun FileMenuSegment(
                 contentDescription = null,
                 tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(4.dp))
             Text(
                 text = label,
                 fontWeight = FontWeight.SemiBold,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
