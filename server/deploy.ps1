@@ -77,14 +77,14 @@ if ($DeployNginx) {
 # ---------- 2c. publish a new APK for in-app updates ----------
 if ($PublishApk -ne '') {
     if (-not (Test-Path $PublishApk)) { Fail "APK not found: $PublishApk" }
-    Info 'publishing APK -> https://269278.xyz/ExpoPlanner.apk'
+    Info 'publishing APK -> https://269278.xyz/toComic.apk'
     scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new `
-        $PublishApk "${ServerUser}@${ServerHost}:/usr/share/nginx/html/ExpoPlanner.apk"
+        $PublishApk "${ServerUser}@${ServerHost}:/usr/share/nginx/html/toComic.apk"
     if ($LASTEXITCODE -ne 0) { Fail 'APK publish failed' }
     ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} `
-        'chmod 644 /usr/share/nginx/html/ExpoPlanner.apk'
+        'chmod 644 /usr/share/nginx/html/toComic.apk'
     if ($LASTEXITCODE -ne 0) { Fail 'APK chmod failed' }
-    Ok 'APK published; update /var/lib/expo-suggestions/app-messages.json with: { update: { versionCode, versionName, title, body, url: "https://269278.xyz/ExpoPlanner.apk" } }'
+    Ok 'APK published; update /var/lib/expo-suggestions/app-messages.json with: { update: { versionCode, versionName, title, body, url: "https://269278.xyz/toComic.apk" } }'
 }
 
 # ---------- 3. public API E2E ----------
@@ -167,6 +167,6 @@ if ($Cleanup) {
 # ---------- 5. build + APK copy (run after code changes) ----------
 # $env:GRADLE_USER_HOME='C:/Users/yyyak/Desktop/应用/AI应用/CJ2026-长期/.gradle-home'
 # & 'C:/Users/yyyak/.gradle/wrapper/dists/gradle-8.7-bin/bhs2wmbdwecv87pi65oeuq5iu/gradle-8.7/bin/gradle.bat' :app:assembleDebug :app:lintDebug :app:assembleRelease --no-daemon --console=plain
-# Copy-Item app\build\outputs\apk\release\app-release.apk "$env:USERPROFILE\Desktop\ExpoPlanner-V0.0.18.apk"
+# Copy-Item app\build\outputs\apk\release\toComic-release.apk "$env:USERPROFILE\Desktop\toComic-V0.0.18.apk"
 
 Info 'done'

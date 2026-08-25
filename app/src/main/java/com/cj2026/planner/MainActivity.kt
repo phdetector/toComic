@@ -767,7 +767,7 @@ private fun MySuggestionsScreen(onBack: () -> Unit) {
 private suspend fun saveExportToDownloads(context: Context, projectId: String, json: String): Boolean =
     withContext(Dispatchers.IO) {
         runCatching {
-            val name = "ExpoPlanner-$projectId-${System.currentTimeMillis()}.json"
+            val name = "toComic-$projectId-${System.currentTimeMillis()}.json"
             val bytes = json.toByteArray(Charsets.UTF_8)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
@@ -793,7 +793,7 @@ private suspend fun shareExportFile(context: Context, projectId: String, json: S
         runCatching {
             val dir = File(context.cacheDir, "exports")
             dir.mkdirs()
-            val file = File(dir, "ExpoPlanner-$projectId-${System.currentTimeMillis()}.json")
+            val file = File(dir, "toComic-$projectId-${System.currentTimeMillis()}.json")
             file.writeText(json)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             val intent = Intent(Intent.ACTION_SEND).apply {
