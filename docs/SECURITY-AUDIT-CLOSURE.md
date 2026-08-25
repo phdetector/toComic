@@ -51,13 +51,18 @@
 | WRITE_EXTERNAL_STORAGE | 保留（API≤28 导出仍需；无法确认无 ≤28 用户，条件满足后再删） |
 | Admin 清理钩子 | `SIGINT/SIGTERM/uncaughtException/unhandledRejection/exit` 全覆盖（kill -9 内存态随进程回收，风险可忽略） |
 
-## 仍需执行（外部依赖）
+## 外部依赖与执行状态
 
-1. 域名解析：`269278.xyz` A 记录 → `101.37.21.166`（用户操作）
-2. Let's Encrypt 邮箱或免邮箱授权（用户操作）
-3. 以下由 `RELEASE.md` 固化，shell 恢复后一条条跑：
-   - `node --check server\server.js`、`node --check admin\admin-server.js`
-   - certbot 签发 → `deploy.ps1 -DeployNginx` → `deploy.ps1 -RunLocalAdminTests -Cleanup`
-   - Gradle `assembleDebug / lintDebug / assembleRelease`（0.0.18）
-   - `deploy.ps1 -PublishApk` + 写 `app-messages.json` 更新条目
-   - `git commit` + tag `v0.0.18`
+1. 域名解析：`269278.xyz` A → `101.37.21.166`（已生效）
+2. Let's Encrypt：已签发（webroot）；续期定时器 `certbot-renew.timer` 已 `enable --now`；dry-run 通过
+3. `RELEASE.md` 固化步骤已全部执行：JS 语法检查、certbot 签发、`deploy.ps1 -DeployNginx`、`-RunLocalAdminTests -Cleanup`、Gradle 三构建、`-PublishApk`、`app-messages.json` 更新条目、git commit + tag `v0.0.18`
+
+## 验证状态（最近一次全量核验 2026-08-25）
+
+- 工作区干净，HEAD `3cf3e2a`，tag `v0.0.18`
+- `https://269278.xyz/api/app/messages` → 200；`http://…` → 301 → https；HSTS / X-Content-Type-Options / X-Frame-Options 在位
+- 发布 APK `https://269278.xyz/ExpoPlanner.apk` → 200（0.0.18 / versionCode 19）
+- node 仅监听 `127.0.0.1:7978` 与 `127.0.0.1:37795`（admin 不暴露公网）；nginx 监听 80/443
+- 无凭据 admin 登录 → 401；无签名 `GET /api/suggestions` → 401
+- `expo-suggestions` / `nginx` active；`EXPO_ADMIN_SECRET` 已配置；SQLite 建议行数 0（测试数据已清理）
+- certbot dry-run `no renewal failures`；`certbot-renew.timer` NEXT 已排期（此前 enabled 但未启动的缺口已修复）

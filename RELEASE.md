@@ -12,10 +12,16 @@ node --check server\server.js
 node --check admin\admin-server.js
 ```
 
-## 2. 服务器签发 Let's Encrypt 证书（一次性，用你的邮箱替换 <email>）
+## 2. 服务器签发 Let's Encrypt 证书（一次性，Alibaba Cloud Linux 3 用 dnf 非 apt）
 ```powershell
-ssh -i $env:USERPROFILE\.ssh\gptvoice_id_ed25519 root@101.37.21.166 "apt-get update && apt-get install -y certbot python3-certbot-nginx && certbot certonly --webroot -w /usr/share/nginx/html -d 269278.xyz --non-interactive --agree-tos -m <email>"
+ssh -i $env:USERPROFILE\.ssh\gptvoice_id_ed25519 root@101.37.21.166 "dnf install -y certbot && certbot certonly --webroot -w /usr/share/nginx/html -d 269278.xyz --non-interactive --agree-tos -m <email>"
 ```
+
+## 2b. 证书自动续期确认（每次部署后核验）
+```powershell
+ssh -i $env:USERPROFILE\.ssh\gptvoice_id_ed25519 root@101.37.21.166 "systemctl enable --now certbot-renew.timer && systemctl list-timers certbot-renew.timer && certbot renew --dry-run --non-interactive"
+```
+必须看到 timer 有 NEXT 触发时间且 dry-run 输出 `no renewal failures`（2026-08-25 曾发现 timer enabled 但未启动，已用 `enable --now` 修复）。
 
 ## 3. 部署 server.js + nginx HTTPS 配置
 ```powershell
