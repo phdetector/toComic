@@ -1,6 +1,6 @@
-# Expo Planner iOS
+# toComic iOS
 
-This directory contains the iOS source version of Expo Planner, built with SwiftUI and targeting iOS 26 Liquid Glass.
+This directory contains the iOS source version of toComic, built with SwiftUI and targeting iOS 26 Liquid Glass.
 
 ## Requirements
 
@@ -9,8 +9,8 @@ This directory contains the iOS source version of Expo Planner, built with Swift
 
 ## Build
 
-1. Open `ExpoPlanner.xcodeproj` with Xcode.
-2. Select the `ExpoPlanner` scheme.
+1. Open `ExpoPlanner.xcodeproj` (historical project filename) with Xcode.
+2. Select the `ExpoPlanner` scheme (historical scheme name).
 3. Run on an iOS 26 simulator or device.
 
 ## Notes

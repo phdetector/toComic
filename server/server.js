@@ -111,7 +111,7 @@ const DEFAULT_APP_MESSAGES = {
     {
       id: 'notice-0001',
       title: '欢迎使用',
-      body: '欢迎使用 Expo Planner, 长按项目卡片可以编辑或删除项目.',
+      body: '欢迎使用 toComic, 长按项目卡片可以编辑或删除项目.',
     },
   ],
   update: null,
@@ -493,7 +493,7 @@ const server = http.createServer((req, res) => {
 })
 
 server.listen(7978, '127.0.0.1', () => {
-  console.log('expo suggestions listening on 127.0.0.1:7978')
+  console.log('toComic suggestions listening on 127.0.0.1:7978')
 })
 
 const adminServer = http.createServer((req, res) => {
@@ -618,5 +618,5 @@ if (!process.env.EXPO_ADMIN_SECRET) {
 }
 
 adminServer.listen(ADMIN_PORT, '127.0.0.1', () => {
-  console.log('expo admin listening on 127.0.0.1:' + ADMIN_PORT)
+  console.log('toComic admin listening on 127.0.0.1:' + ADMIN_PORT)
 })

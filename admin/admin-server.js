@@ -251,6 +251,6 @@ process.on('exit', cleanup)
 
 startTunnel()
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`expo admin UI listening on http://127.0.0.1:${PORT} (v${UI_VERSION})`)
+  console.log(`toComic admin UI listening on http://127.0.0.1:${PORT} (v${UI_VERSION})`)
   console.log(`ssh tunnel to 101.37.21.166:${TUNNEL_PORT}`)
 })

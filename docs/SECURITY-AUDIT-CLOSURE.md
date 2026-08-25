@@ -56,13 +56,13 @@
 1. 域名解析：`269278.xyz` A → `101.37.21.166`（已生效）
 2. Let's Encrypt：已签发（webroot）；续期定时器 `certbot-renew.timer` 已 `enable --now`；dry-run 通过
 3. `RELEASE.md` 固化步骤已全部执行：JS 语法检查、certbot 签发、`deploy.ps1 -DeployNginx`、`-RunLocalAdminTests -Cleanup`、Gradle 三构建、`-PublishApk`、`app-messages.json` 更新条目、git commit + tag `v0.0.18`
-4. 0.0.19（versionCode 20）已发布：minified release 签名后分发，`ExpoPlanner.apk` md5 与本地 `app-release.apk` 一致，更新条目已切换
+4. 0.0.19（versionCode 20）已发布：minified release 签名后分发，`toComic.apk` md5 与本地 `app-release.apk` 一致，更新条目已切换
 
 ## 验证状态（最近一次全量核验 2026-08-25）
 
 - 工作区干净，HEAD 最新提交，tag `v0.0.19`（`v0.0.18` 保留）
 - `https://269278.xyz/api/app/messages` → 200；`http://…` → 301 → https；HSTS / X-Content-Type-Options / X-Frame-Options 在位
-- 发布 APK `https://269278.xyz/ExpoPlanner.apk` → 200（0.0.19 / versionCode 20，minified release，签名与历史 debug 一致）
+- 发布 APK `https://269278.xyz/toComic.apk` → 200（0.0.19 / versionCode 20，minified release，签名与历史 debug 一致）
 - node 仅监听 `127.0.0.1:7978` 与 `127.0.0.1:37795`（admin 不暴露公网）；nginx 监听 80/443
 - 无凭据 admin 登录 → 401；无签名 `GET /api/suggestions` → 401
 - `expo-suggestions` / `nginx` active；`EXPO_ADMIN_SECRET` 已配置；SQLite 建议行数 0（测试数据已清理）
