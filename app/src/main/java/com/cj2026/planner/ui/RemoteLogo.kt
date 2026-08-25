@@ -79,7 +79,8 @@ fun RemoteLogo(url: String?, label: String, modifier: Modifier = Modifier) {
 }
 
 private suspend fun loadBitmap(url: String): Bitmap? = withContext(logoDispatcher) {
-    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+    val target = if (url.startsWith("http://")) "https://" + url.removePrefix("http://") else url
+    val connection = (URL(target).openConnection() as HttpURLConnection).apply {
         connectTimeout = 5000
         readTimeout = 5000
         instanceFollowRedirects = true

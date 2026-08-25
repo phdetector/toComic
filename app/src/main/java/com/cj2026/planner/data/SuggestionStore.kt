@@ -9,13 +9,13 @@ class SuggestionStore(context: Context) {
     fun clientId(): String {
         prefs.getString("client_id", null)?.takeIf { it.isNotBlank() }?.let { return it }
         return UUID.randomUUID().toString().also { id ->
-            prefs.edit().putString("client_id", id).apply()
+            prefs.edit().putString("client_id", id).commit()
         }
     }
 
     fun clientSecret(): String = prefs.getString("client_secret", "").orEmpty()
 
     fun saveClientSecret(secret: String) {
-        prefs.edit().putString("client_secret", secret).apply()
+        prefs.edit().putString("client_secret", secret).commit()
     }
 }

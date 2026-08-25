@@ -1,5 +1,6 @@
 const http = require('http')
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const { spawn } = require('child_process')
 
@@ -12,6 +13,10 @@ let cache = []
 let lastSync = 0
 let tunnelProcess = null
 
+class UnauthorizedError extends Error {
+  constructor() { super('unauthorized') }
+}
+
 function startTunnel() {
   if (process.env.EXPO_ADMIN_NO_TUNNEL === '1') return
   const sshKey = process.env.EXPO_ADMIN_SSH_KEY
@@ -23,7 +28,7 @@ function startTunnel() {
     '-i', sshKey,
     '-o', 'BatchMode=yes',
     '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=NUL',
+    '-o', `UserKnownHostsFile=${path.join(os.tmpdir(), 'expo-admin-known-hosts')}`,
   ], { stdio: 'ignore' })
   tunnelProcess.on('exit', () => { tunnelProcess = null })
 }
@@ -36,7 +41,12 @@ function stopTunnel() {
 }
 
 function json(res, code, body) {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  })
   res.end(JSON.stringify(body))
 }
 
@@ -61,15 +71,21 @@ function readBody(req) {
   })
 }
 
+function adoptRenewedToken(response) {
+  const renewed = response.headers.get('x-expo-token')
+  if (renewed) token = renewed
+}
+
 async function refresh() {
   const response = await fetch(`${REMOTE}/admin/suggestions`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (response.status === 401) {
     token = null
-    throw new Error('unauthorized')
+    throw new UnauthorizedError()
   }
   if (!response.ok) throw new Error('remote fetch failed')
+  adoptRenewedToken(response)
   const payload = await response.json()
   cache = Array.isArray(payload.suggestions) ? payload.suggestions : []
   lastSync = Date.now()
@@ -86,11 +102,20 @@ async function remotePost(route, body) {
   })
   if (response.status === 401) {
     token = null
-    throw new Error('unauthorized')
+    throw new UnauthorizedError()
   }
   const payload = await response.json()
   if (!response.ok || !payload.ok) throw new Error(payload.error || 'remote update failed')
+  adoptRenewedToken(response)
   await refresh()
+}
+
+function errorResponse(res, error) {
+  if (error instanceof UnauthorizedError) {
+    json(res, 401, { ok: false, error: 'unauthorized' })
+  } else {
+    json(res, 502, { ok: false, error: String(error) })
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -122,7 +147,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
     const file = path.join(__dirname, 'public', 'index.html')
     const content = fs.readFileSync(file)
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+      })
     res.end(content)
     return
   }
@@ -142,7 +172,7 @@ const server = http.createServer(async (req, res) => {
       if (Date.now() - lastSync > 60 * 1000) await refresh()
       json(res, 200, { ok: true, suggestions: cache })
     } catch (error) {
-      json(res, 502, { ok: false, error: String(error) })
+      errorResponse(res, error)
     }
     return
   }
@@ -153,7 +183,7 @@ const server = http.createServer(async (req, res) => {
       await remotePost(pathname.replace('/api/', '/admin/'), body)
       json(res, 200, { ok: true })
     } catch (error) {
-      json(res, 502, { ok: false, error: String(error) })
+      errorResponse(res, error)
     }
     return
   }

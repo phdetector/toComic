@@ -26,6 +26,10 @@ class PlannerStore(
         prefs.edit().putString("state_json", buildExportJson(snapshot.normalized()).toString()).apply()
     }
 
+    fun saveSnapshotCommitted(snapshot: PlannerSnapshot) {
+        prefs.edit().putString("state_json", buildExportJson(snapshot.normalized()).toString()).commit()
+    }
+
     fun clear() {
         prefs.edit().clear().apply()
     }
@@ -117,12 +121,45 @@ class PlannerStore(
 
     private fun parseSnapshotJson(raw: String): PlannerSnapshot {
         if (raw.isBlank()) return PlannerSnapshot()
+        ensureJsonShape(raw)
         val root = JSONObject(raw)
+        val statesArray = root.optJSONArray("items") ?: JSONArray()
+        val customBoothsArray = root.optJSONArray("customBooths") ?: JSONArray()
+        val boothsArray = root.optJSONArray("booths") ?: JSONArray()
+        if (maxOf(statesArray.length(), customBoothsArray.length(), boothsArray.length()) > MAX_IMPORT_ITEMS) {
+            error("import file has too many entries")
+        }
         return PlannerSnapshot(
-            states = parseStates(root.optJSONArray("items") ?: JSONArray()),
-            customBooths = parseCustomBooths(root.optJSONArray("customBooths") ?: JSONArray()),
-            booths = parseBooths(root.optJSONArray("booths") ?: JSONArray())
+            states = parseStates(statesArray),
+            customBooths = parseCustomBooths(customBoothsArray),
+            booths = parseBooths(boothsArray)
         ).normalized()
+    }
+
+    private fun ensureJsonShape(raw: String) {
+        var depth = 0
+        var maxDepth = 0
+        var inString = false
+        var escaped = false
+        for (char in raw) {
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    char == '\\' -> escaped = true
+                    char == '"' -> inString = false
+                }
+            } else {
+                when (char) {
+                    '"' -> inString = true
+                    '{', '[' -> {
+                        depth += 1
+                        if (depth > maxDepth) maxDepth = depth
+                    }
+                    '}', ']' -> depth -= 1
+                }
+            }
+        }
+        if (maxDepth > MAX_JSON_DEPTH) error("import file is nested too deeply")
     }
 
     private fun parseBooths(items: JSONArray): List<Booth> {
@@ -279,6 +316,9 @@ class PlannerStore(
         .replace('\u2019', '\'')
 
     companion object {
+        const val MAX_IMPORT_ITEMS = 10_000
+        const val MAX_JSON_DEPTH = 64
+
         fun normalizePunctuation(value: String): String = value
             .replace('\uFF0C', ',')
             .replace('\u3002', '.')

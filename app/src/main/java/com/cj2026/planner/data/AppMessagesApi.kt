@@ -10,7 +10,17 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object AppMessagesApi {
-    const val ENDPOINT = "http://101.37.21.166/api/app/messages"
+    const val ENDPOINT = "https://269278.xyz/api/app/messages"
+
+    private val ALLOWED_UPDATE_HOSTS = setOf("269278.xyz", "www.269278.xyz")
+
+    private fun isAllowedUpdateUrl(value: String): Boolean {
+        if (!value.startsWith("https://")) return false
+        return runCatching {
+            val host = java.net.URI(value).host?.lowercase()
+            host != null && ALLOWED_UPDATE_HOSTS.any { it == host || host.endsWith(".$it") }
+        }.getOrDefault(false)
+    }
 
     suspend fun fetch(): Result<AppMessages> = withContext(Dispatchers.IO) {
         runCatching {
@@ -61,7 +71,7 @@ object AppMessagesApi {
                             versionName = item.optString("versionName").take(40),
                             title = item.optString("title").take(200),
                             body = item.optString("body").take(2000),
-                            url = item.optString("url").takeIf { it.startsWith("https://") }.orEmpty()
+                            url = item.optString("url").takeIf(::isAllowedUpdateUrl).orEmpty()
                         )
                     }
                 }

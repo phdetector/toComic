@@ -1,0 +1,161 @@
+# Deploy expo-suggestions server + run end-to-end verification.
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -AdminPassword <password> [-SkipDeploy] [-DeployNginx] [-PublishApk <apk-path>] [-RunLocalAdminTests] [-Cleanup]
+# One-time HTTPS setup (requires DNS A record 269278.xyz -> 101.37.21.166 already resolving):
+#   ssh -i $env:USERPROFILE\.ssh\gptvoice_id_ed25519 root@101.37.21.166 `
+#     "apt-get update && apt-get install -y certbot python3-certbot-nginx && certbot certonly --webroot -w /usr/share/nginx/html -d 269278.xyz --non-interactive --agree-tos -m <email>"
+# Then run this script with -DeployNginx once.
+
+param(
+    [string]$AdminPassword = "",
+    [switch]$SkipDeploy,
+    [switch]$DeployNginx,
+    [string]$PublishApk = "",
+    [switch]$RunLocalAdminTests,
+    [switch]$Cleanup
+)
+
+$ErrorActionPreference = 'Stop'
+
+$ServerHost   = '101.37.21.166'
+$ServerUser   = 'root'
+$SshKey       = Join-Path $env:USERPROFILE '.ssh\gptvoice_id_ed25519'
+$RemoteDir    = '/opt/expo-suggestions'
+$AdminUrl     = 'http://127.0.0.1:37796'
+$PublicUrl    = 'https://269278.xyz'
+
+function Info($message) { Write-Host "[deploy] $message" -ForegroundColor Cyan }
+function Ok($message)    { Write-Host "[ok] $message" -ForegroundColor Green }
+function Fail($message)  { Write-Host "[FAIL] $message" -ForegroundColor Red; exit 1 }
+
+function Invoke-JsonPost($Uri, $Headers, $Json) {
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
+  return Invoke-RestMethod -Method Post -Uri $Uri -Headers $Headers -ContentType 'application/json; charset=utf-8' -Body $bytes -TimeoutSec 30
+}
+
+# ---------- 1. local syntax checks ----------
+Info 'node --check server.js'
+node --check (Join-Path $PSScriptRoot 'server.js')
+if ($LASTEXITCODE -ne 0) { Fail 'server.js syntax check failed' }
+
+Info 'node --check admin-server.js'
+node --check (Join-Path (Join-Path $PSScriptRoot '..') 'admin\admin-server.js')
+if ($LASTEXITCODE -ne 0) { Fail 'admin-server.js syntax check failed' }
+
+# ---------- 2. deploy ----------
+if (-not $SkipDeploy) {
+    Info "scp server.js -> $ServerHost`:$RemoteDir/server.js"
+    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no `
+        (Join-Path $PSScriptRoot 'server.js') "${ServerUser}@${ServerHost}:$RemoteDir/server.js"
+    if ($LASTEXITCODE -ne 0) { Fail 'scp failed' }
+
+    Info 'restart expo-suggestions service'
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} `
+        'chown www:www /opt/expo-suggestions/server.js && systemctl restart expo-suggestions && sleep 1 && systemctl is-active expo-suggestions'
+    if ($LASTEXITCODE -ne 0) { Fail 'service restart failed' }
+    Ok 'deployed and service is active'
+}
+
+# ---------- 2b. nginx config deploy (first time / after TLS changes) ----------
+if ($DeployNginx) {
+    Info 'deploying nginx-default.conf'
+    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no `
+        (Join-Path $PSScriptRoot 'nginx-default.conf') "${ServerUser}@${ServerHost}:/etc/nginx/conf.d/default.conf"
+    if ($LASTEXITCODE -ne 0) { Fail 'nginx scp failed' }
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} `
+        'nginx -t && systemctl reload nginx'
+    if ($LASTEXITCODE -ne 0) { Fail 'nginx reload failed' }
+    Ok 'nginx reloaded'
+}
+
+# ---------- 2c. publish a new APK for in-app updates ----------
+if ($PublishApk -ne '') {
+    if (-not (Test-Path $PublishApk)) { Fail "APK not found: $PublishApk" }
+    Info 'publishing APK -> https://269278.xyz/ExpoPlanner.apk'
+    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no `
+        $PublishApk "${ServerUser}@${ServerHost}:/usr/share/nginx/html/ExpoPlanner.apk"
+    if ($LASTEXITCODE -ne 0) { Fail 'APK publish failed' }
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} `
+        'chmod 644 /usr/share/nginx/html/ExpoPlanner.apk'
+    if ($LASTEXITCODE -ne 0) { Fail 'APK chmod failed' }
+    Ok 'APK published; update /var/lib/expo-suggestions/app-messages.json with: { update: { versionCode, versionName, title, body, url: "https://269278.xyz/ExpoPlanner.apk" } }'
+}
+
+# ---------- 3. public API E2E ----------
+$publicApi = "$PublicUrl/api"
+Info "public API smoke: $publicApi"
+
+$messages = Invoke-RestMethod -Uri "$publicApi/app/messages" -TimeoutSec 20
+if (-not $messages.ok) { Fail 'GET /api/app/messages not ok' }
+Ok "messages: $(@($messages.notices).Count) notices, update=$($messages.update -ne $null)"
+
+$clientId  = [guid]::NewGuid().ToString()
+$payload   = @{ clientId = $clientId; title = 'E2E 测试'; content = 'deploy.ps1 验证'; appVersion = '0.0.18' } | ConvertTo-Json
+$submit    = Invoke-JsonPost "$publicApi/suggestions" @{} $payload
+if (-not $submit.ok) { Fail 'POST /api/suggestions not ok' }
+Ok "submit ok, clientId=$clientId"
+
+try {
+    Invoke-RestMethod -Uri "$publicApi/suggestions?clientId=$clientId" -TimeoutSec 20 | Out-Null
+    Fail 'GET without signature should be 401'
+} catch {
+    if ($_.Exception.Response.StatusCode.value__ -ne 401) { Fail "expected 401, got $($_.Exception.Response.StatusCode.value__)" }
+    Ok 'GET without signature -> 401 (expected)'
+}
+
+$secret = $submit.secret
+if (-not $secret) { Fail 'submit did not return a secret' }
+$sig = ''
+$hmac = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($secret))
+$sig = [BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($clientId))).Replace('-', '').ToLower()
+$list = Invoke-RestMethod -Uri "$publicApi/suggestions?clientId=$clientId&sig=$sig" -TimeoutSec 20
+if (-not $list.ok -or @($list.suggestions).Count -lt 1) { Fail 'GET with signature failed' }
+Ok "GET with signature ok, suggestions=$(@($list.suggestions).Count)"
+
+# ---------- 4. admin tunnel E2E (login -> list -> reply -> App-visible reply) ----------
+if ($RunLocalAdminTests) {
+    if ([string]::IsNullOrWhiteSpace($AdminPassword)) { Fail '-AdminPassword is required with -RunLocalAdminTests' }
+
+    Info "starting local admin-server on $AdminUrl (auto SSH tunnel)"
+    $adminProcess = Start-Process node -ArgumentList (Join-Path (Join-Path $PSScriptRoot '..') 'admin\admin-server.js') `
+        -WorkingDirectory (Join-Path (Join-Path $PSScriptRoot '..') 'admin') -PassThru -WindowStyle Hidden
+    Start-Sleep -Seconds 4
+    try {
+        $login = Invoke-JsonPost "$AdminUrl/api/login" @{} (@{ username = 'admin_c85ee154'; password = $AdminPassword } | ConvertTo-Json)
+        if (-not $login.ok) { Fail 'admin login failed' }
+        Ok 'admin login ok'
+
+        $headers = @{ 'X-Expo-Admin' = '1' }
+        $adminList = Invoke-RestMethod -Uri "$AdminUrl/api/suggestions" -Headers $headers -TimeoutSec 30
+        if (-not $adminList.ok) { Fail 'admin list failed' }
+        Ok "admin list ok, suggestions=$(@($adminList.suggestions).Count)"
+
+        $reply = Invoke-JsonPost "$AdminUrl/api/reply" $headers (@{ id = $submit.suggestion.id; reply = 'E2E 回复' } | ConvertTo-Json)
+        if (-not $reply.ok) { Fail 'admin reply failed' }
+        Ok 'admin reply ok'
+
+        Start-Sleep -Seconds 2
+        $after = Invoke-RestMethod -Uri "$publicApi/suggestions?clientId=$clientId&sig=$sig" -TimeoutSec 20
+        $item = $after.suggestions | Where-Object { $_.id -eq $submit.suggestion.id }
+        if ($null -eq $item -or $item.reply -ne 'E2E 回复') { Fail 'reply not visible from App side' }
+        Ok 'reply visible from App side (reply E2E passed)'
+    } finally {
+        Stop-Process -Id $adminProcess.Id -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------- 4b. optional test-data cleanup ----------
+if ($Cleanup) {
+    Info 'removing the E2E test suggestion from the server database'
+    $escapedId = $submit.suggestion.id -replace '[^a-zA-Z0-9-]', ''
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} "node /opt/expo-suggestions/cleanup-suggestion.js $escapedId"
+    if ($LASTEXITCODE -ne 0) { Fail 'test-data cleanup failed' }
+    Ok "cleaned test suggestion $escapedId"
+}
+
+# ---------- 5. build + APK copy (run after code changes) ----------
+# $env:GRADLE_USER_HOME='C:/Users/yyyak/Desktop/应用/AI应用/CJ2026-长期/.gradle-home'
+# & 'C:/Users/yyyak/.gradle/wrapper/dists/gradle-8.7-bin/bhs2wmbdwecv87pi65oeuq5iu/gradle-8.7/bin/gradle.bat' :app:assembleDebug :app:lintDebug :app:assembleRelease --no-daemon --console=plain
+# Copy-Item app\build\outputs\apk\release\app-release.apk "$env:USERPROFILE\Desktop\ExpoPlanner-V0.0.18.apk"
+
+Info 'done'

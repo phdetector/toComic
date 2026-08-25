@@ -1,7 +1,6 @@
 package com.cj2026.planner.ui
 
 import android.app.Activity
-import android.view.View
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +16,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.view.WindowInsetsControllerCompat
 import com.cj2026.planner.R
 
 private val DiffAdded = Color(0xFF00C853)
@@ -109,19 +109,10 @@ fun ChinaJoyTheme(content: @Composable () -> Unit) {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
         window.statusBarColor = colors.surface.toArgb()
         window.navigationBarColor = colors.surface.toArgb()
-
-        var flags = window.decorView.systemUiVisibility
-        flags = if (darkTheme) {
-            flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-        } else {
-            flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        WindowInsetsControllerCompat(window, view).apply {
+            isAppearanceLightStatusBars = !darkTheme
+            isAppearanceLightNavigationBars = !darkTheme
         }
-        flags = if (darkTheme) {
-            flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
-        } else {
-            flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        }
-        window.decorView.systemUiVisibility = flags
     }
 
     MaterialTheme(

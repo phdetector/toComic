@@ -2,9 +2,11 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const { randomUUID, createHmac, scryptSync, timingSafeEqual, createHash, randomBytes } = require('node:crypto')
+const { DatabaseSync } = require('node:sqlite')
 
 const DATA_DIR = '/var/lib/expo-suggestions'
 const DATA_FILE = path.join(DATA_DIR, 'suggestions.jsonl')
+const DB_FILE = path.join(DATA_DIR, 'suggestions.db')
 const CLIENT_SECRETS_FILE = path.join(DATA_DIR, 'client-secrets.jsonl')
 const MAX_TITLE = 200
 const MAX_CONTENT = 5000
@@ -28,7 +30,17 @@ function allowRequest(ip) {
   if (recent.length >= RATE_LIMIT) return false
   recent.push(now)
   requestTimes.set(ip, recent)
-  if (requestTimes.size > 10000) requestTimes.clear()
+  if (requestTimes.size > 10000) {
+    let oldestKey = null
+    let oldestTime = Infinity
+    for (const [key, times] of requestTimes) {
+      if (times.length > 0 && times[0] < oldestTime) {
+        oldestTime = times[0]
+        oldestKey = key
+      }
+    }
+    if (oldestKey !== null) requestTimes.delete(oldestKey)
+  }
   return true
 }
 
@@ -76,6 +88,7 @@ function ipHash(ip) {
 }
 
 const APP_MESSAGES_FILE = path.join(DATA_DIR, 'app-messages.json')
+const ALLOWED_UPDATE_HOSTS = ['269278.xyz', 'www.269278.xyz']
 const DEFAULT_APP_MESSAGES = {
   notices: [
     {
@@ -87,14 +100,46 @@ const DEFAULT_APP_MESSAGES = {
   update: null,
 }
 
+function sanitizeUpdate(update) {
+  if (!update || typeof update !== 'object') return null
+  const versionCode = Number(update.versionCode)
+  if (!Number.isInteger(versionCode) || versionCode < 1 || versionCode > 99999) return null
+  const url = String(update.url || '')
+  if (!url.startsWith('https://')) return null
+  let host = ''
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch (_error) {
+    return null
+  }
+  if (!ALLOWED_UPDATE_HOSTS.some(entry => host === entry || host.endsWith('.' + entry))) return null
+  return {
+    versionCode,
+    versionName: String(update.versionName || '').slice(0, 40),
+    title: String(update.title || '').slice(0, 200),
+    body: String(update.body || '').slice(0, 2000),
+    url,
+  }
+}
+
+function sanitizeNotices(notices) {
+  if (!Array.isArray(notices)) return []
+  return notices.slice(0, 50).map(item => {
+    const id = String(item && item.id || '').slice(0, 100)
+    const title = String(item && item.title || '').slice(0, 200)
+    const body = String(item && item.body || '').slice(0, 2000)
+    return { id, title, body }
+  }).filter(item => item.id && (item.title || item.body))
+}
+
 function readAppMessages() {
   try {
     const raw = fs.readFileSync(APP_MESSAGES_FILE, 'utf8')
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return DEFAULT_APP_MESSAGES
     return {
-      notices: Array.isArray(parsed.notices) ? parsed.notices : [],
-      update: parsed.update && typeof parsed.update === 'object' ? parsed.update : null,
+      notices: sanitizeNotices(parsed.notices),
+      update: sanitizeUpdate(parsed.update),
     }
   } catch (error) {
     if (!error || error.code !== 'ENOENT') console.error('failed to read app messages', error)
@@ -125,35 +170,99 @@ function readBody(req, callback) {
   req.on('end', () => callback(raw))
 }
 
-function readSuggestions() {
+const db = new DatabaseSync(DB_FILE)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS suggestions (
+    id TEXT PRIMARY KEY,
+    clientId TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    appVersion TEXT DEFAULT '',
+    deviceModel TEXT DEFAULT '',
+    androidVersion TEXT DEFAULT '',
+    submittedAt INTEGER NOT NULL,
+    receivedAt INTEGER NOT NULL,
+    reply TEXT DEFAULT '',
+    repliedAt INTEGER,
+    processed INTEGER DEFAULT 0,
+    favorite INTEGER DEFAULT 0,
+    archived INTEGER DEFAULT 0,
+    ipHash TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_suggestions_client ON suggestions(clientId);
+`)
+
+function migrateLegacyJsonl() {
   let raw = ''
   try {
     raw = fs.readFileSync(DATA_FILE, 'utf8')
   } catch (error) {
-    if (error && error.code === 'ENOENT') return []
+    if (error && error.code === 'ENOENT') return
     throw error
   }
-  return raw
-    .split('\n')
-    .filter(Boolean)
-    .map(line => {
-      try {
-        return JSON.parse(line)
-      } catch (_error) {
-        return null
-      }
-    })
-    .filter(Boolean)
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO suggestions
+      (id, clientId, title, content, appVersion, deviceModel, androidVersion,
+       submittedAt, receivedAt, reply, repliedAt, processed, favorite, archived, ipHash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const r = JSON.parse(line)
+      insert.run(
+        String(r.id || randomUUID()), String(r.clientId || ''), String(r.title || ''), String(r.content || ''),
+        String(r.appVersion || ''), String(r.deviceModel || ''), String(r.androidVersion || ''),
+        Number(r.submittedAt) || Date.now(), Number(r.receivedAt) || Date.now(),
+        String(r.reply || ''), r.repliedAt == null ? null : Number(r.repliedAt),
+        r.processed ? 1 : 0, r.favorite ? 1 : 0, r.archived ? 1 : 0, String(r.ipHash || '')
+      )
+    } catch (_error) { /* skip malformed legacy line */ }
+  }
+  fs.renameSync(DATA_FILE, DATA_FILE + '.legacy')
+}
+
+migrateLegacyJsonl()
+
+function readSuggestions() {
+  const rows = db.prepare('SELECT * FROM suggestions').all()
+  return rows.map(row => ({
+    id: row.id,
+    clientId: row.clientId,
+    title: row.title,
+    content: row.content,
+    appVersion: row.appVersion,
+    deviceModel: row.deviceModel,
+    androidVersion: row.androidVersion,
+    submittedAt: Number(row.submittedAt),
+    receivedAt: Number(row.receivedAt),
+    reply: row.reply,
+    repliedAt: row.repliedAt == null ? null : Number(row.repliedAt),
+    processed: Boolean(row.processed),
+    favorite: Boolean(row.favorite),
+    archived: Boolean(row.archived),
+    ipHash: row.ipHash,
+  }))
 }
 
 function appendSuggestion(record) {
   fs.mkdirSync(DATA_DIR, { recursive: true })
-  fs.appendFileSync(DATA_FILE, JSON.stringify(record) + '\n')
+  db.prepare(`
+    INSERT INTO suggestions
+      (id, clientId, title, content, appVersion, deviceModel, androidVersion,
+       submittedAt, receivedAt, reply, repliedAt, processed, favorite, archived, ipHash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, 0, 0, 0, ?)
+  `).run(
+    record.id, record.clientId, record.title, record.content,
+    record.appVersion, record.deviceModel, record.androidVersion,
+    record.submittedAt, record.receivedAt, record.ipHash
+  )
 }
 
 const ADMIN_PORT = 37795
 const ADMIN_CREDENTIALS_FILE = path.join(DATA_DIR, 'admin-credentials.json')
 const ADMIN_TOKEN_TTL_MS = 30 * 60 * 1000
+const ADMIN_TOKEN_RENEW_MS = 5 * 60 * 1000
 const ADMIN_LOGIN_MAX_FAILURES = 5
 const ADMIN_LOGIN_LOCK_MS = 15 * 60 * 1000
 const adminTokens = new Map()
@@ -177,19 +286,23 @@ function readAdminCredentials() {
 function issueAdminToken(username) {
   const expiry = Date.now() + ADMIN_TOKEN_TTL_MS
   const token = createHmac('sha256', adminSecret()).update(`${username}:${expiry}`).digest('hex')
-  adminTokens.set(token, expiry)
+  adminTokens.set(token, { username, expiry })
   return token
 }
 
-function verifyAdmin(req) {
+function verifyAdmin(req, res) {
   const header = String(req.headers.authorization || '')
   if (!header.startsWith('Bearer ')) return false
   const token = header.slice(7)
-  const expiry = adminTokens.get(token)
-  if (!expiry) return false
-  if (Date.now() > expiry) {
+  const state = adminTokens.get(token)
+  if (!state) return false
+  if (Date.now() > state.expiry) {
     adminTokens.delete(token)
     return false
+  }
+  if (state.expiry - Date.now() < ADMIN_TOKEN_RENEW_MS) {
+    adminTokens.delete(token)
+    res.setHeader('X-Expo-Token', issueAdminToken(state.username))
   }
   return true
 }
@@ -215,25 +328,18 @@ function clearLoginFailures(ip) {
 }
 
 function updateSuggestion(id, patch) {
-  const lines = fs.readFileSync(DATA_FILE, 'utf8').split('\n')
-  let updated = false
-  const next = lines.map(line => {
-    if (!line.trim()) return line
-    const record = JSON.parse(line)
-    if (record.id !== id) return line
-    for (const key of ['reply', 'repliedAt', 'processed', 'favorite', 'archived']) {
-      if (Object.prototype.hasOwnProperty.call(patch, key)) record[key] = patch[key]
+  const sets = []
+  const values = []
+  for (const key of ['reply', 'repliedAt', 'processed', 'favorite', 'archived']) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      sets.push(`${key} = ?`)
+      values.push(key === 'processed' || key === 'favorite' || key === 'archived' ? (patch[key] ? 1 : 0) : patch[key])
     }
-    updated = true
-    return JSON.stringify(record)
-  })
-  if (!updated) return false
-  const stats = fs.statSync(DATA_FILE)
-  const tmp = DATA_FILE + '.tmp'
-  fs.writeFileSync(tmp, next.join('\n'))
-  fs.renameSync(tmp, DATA_FILE)
-  fs.chownSync(DATA_FILE, stats.uid, stats.gid)
-  return true
+  }
+  if (sets.length === 0) return false
+  values.push(id)
+  const result = db.prepare(`UPDATE suggestions SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  return result.changes > 0
 }
 
 const server = http.createServer((req, res) => {
@@ -344,7 +450,6 @@ server.listen(7978, '127.0.0.1', () => {
 const adminServer = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     })
@@ -391,7 +496,7 @@ const adminServer = http.createServer((req, res) => {
     return
   }
 
-  if (!verifyAdmin(req)) {
+  if (!verifyAdmin(req, res)) {
     send(res, 401, { ok: false, error: 'unauthorized' })
     return
   }

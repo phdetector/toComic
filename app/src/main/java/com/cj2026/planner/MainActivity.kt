@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -116,6 +117,7 @@ import com.cj2026.planner.data.ProjectData
 import com.cj2026.planner.data.ProjectStore
 import com.cj2026.planner.data.SuggestionApi
 import com.cj2026.planner.data.SuggestionStore
+import com.cj2026.planner.data.UpdateInstaller
 import com.cj2026.planner.model.AppNotice
 import com.cj2026.planner.model.AppUpdate
 import com.cj2026.planner.model.Booth
@@ -158,6 +160,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppRoot() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val projectStore = remember { ProjectStore(context) }
     val customProjects = remember { mutableStateListOf<ExpoProject>() }
     val deletedBuiltInIds = remember { mutableStateListOf<String>() }
@@ -171,6 +174,7 @@ private fun AppRoot() {
     val appPrefs = remember { AppPrefs(context) }
     var pendingNotices by remember { mutableStateOf<List<AppNotice>>(emptyList()) }
     var updateInfo by remember { mutableStateOf<AppUpdate?>(null) }
+    var updating by remember { mutableStateOf(false) }
     var showDeclaration by remember { mutableStateOf(!appPrefs.declarationAccepted) }
 
     if (showDeclaration) {
@@ -368,10 +372,34 @@ private fun AppRoot() {
                 val url = update.url.takeIf {
                     it.isNotBlank() && it.startsWith("https://")
                 } ?: return@MessageDialog
-                runCatching {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                if (updating) return@MessageDialog
+                if (!UpdateInstaller.canInstall(context)) {
+                    UpdateInstaller.openInstallPermissionSettings(context)
+                    return@MessageDialog
                 }
-                updateInfo = null
+                updating = true
+                scope.launch {
+                    try {
+                        Toast.makeText(context, "正在下载更新...", Toast.LENGTH_SHORT).show()
+                        val apk = UpdateInstaller.download(context, url).getOrElse {
+                            Toast.makeText(context, "更新下载失败, 请稍后重试", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        if (!UpdateInstaller.verifySignature(context, apk)) {
+                            apk.delete()
+                            Toast.makeText(context, "更新包签名校验失败, 已取消安装", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        if (!UpdateInstaller.install(context, apk)) {
+                            apk.delete()
+                            Toast.makeText(context, "无法安装更新, 请稍后重试", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        updateInfo = null
+                    } finally {
+                        updating = false
+                    }
+                }
             }
         )
     }
@@ -1311,6 +1339,7 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
     var showHallPicker by remember(project.id) { mutableStateOf(false) }
     var showFileMenu by remember(project.id) { mutableStateOf(false) }
     var showAddBooth by remember(project.id) { mutableStateOf(false) }
+    var pendingAddBooth by remember(project.id) { mutableStateOf<CustomBooth?>(null) }
     var sortMode by remember(project.id) { mutableStateOf(SortMode.Default) }
 
     fun currentSnapshot(): PlannerSnapshot =
@@ -1318,6 +1347,10 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
 
     fun saveSnapshot() {
         store.saveSnapshot(currentSnapshot())
+    }
+
+    fun saveSnapshotCommitted() {
+        store.saveSnapshotCommitted(currentSnapshot())
     }
 
     fun upsertCustomBooth(booth: CustomBooth) {
@@ -1345,6 +1378,21 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
         states[id] = next
         syncCustomBoothState(id, next)
         saveSnapshot()
+    }
+
+    fun commitAddBooth(custom: CustomBooth, isUpdate: Boolean) {
+        upsertCustomBooth(custom)
+        states[custom.id] = custom.asState()
+        if (currentHall == null) {
+            currentHall = Hall(custom.hallId, "", "自定义展馆", 0xFF8D867A)
+        }
+        saveSnapshotCommitted()
+        showAddBooth = false
+        scope.launch {
+            snackbar.showSnackbar(
+                if (isUpdate) "已更新 ${custom.hallId}-${custom.boothCode}" else "已添加 ${custom.hallId}-${custom.boothCode}"
+            )
+        }
     }
 
     LaunchedEffect(project.id) {
@@ -1432,7 +1480,7 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                 customBooths.addAll(merged)
             }
         }
-        saveSnapshot()
+        saveSnapshotCommitted()
         currentHall = null
     }
 
@@ -1448,10 +1496,20 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
         if (uri != null) scope.launch {
             val loaded = runCatching { store.importFrom(uri) }
             if (loaded.isFailure) {
-                snackbar.showSnackbar("导入失败: 文件无法解析")
+                val reason = when (loaded.exceptionOrNull()?.message) {
+                    "import file too large" -> "文件过大(上限 5MB)"
+                    "import file has too many entries" -> "条目过多(上限 10000 条)"
+                    "import file is nested too deeply" -> "文件嵌套层级过深"
+                    else -> "文件无法解析"
+                }
+                snackbar.showSnackbar("导入失败: $reason")
                 return@launch
             }
             val imported = loaded.getOrThrow()
+            if (imported.states.isEmpty() && imported.customBooths.isEmpty() && imported.booths.isEmpty()) {
+                snackbar.showSnackbar("文件内无有效数据")
+                return@launch
+            }
             val keep = importKeepFavorites
             val importHasFavorites = hasFavorites(imported)
             if (keep && !importHasFavorites) {
@@ -1697,14 +1755,24 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                     planned = planned,
                     planOrder = order
                 )
-                upsertCustomBooth(custom)
-                states[custom.id] = custom.asState()
-                if (currentHall == null) {
-                    currentHall = Hall(hallId, "", "自定义展馆", 0xFF8D867A)
+                if (customBooths.any { it.id == custom.id }) {
+                    pendingAddBooth = custom
+                } else {
+                    commitAddBooth(custom, isUpdate = false)
                 }
-                saveSnapshot()
-                showAddBooth = false
-                scope.launch { snackbar.showSnackbar("已添加 ${custom.hallId}-${custom.boothCode}") }
+            }
+        )
+    }
+    pendingAddBooth?.let { custom ->
+        MessageDialog(
+            title = "展台已存在",
+            body = "已存在展馆/展台号/名称相同的展台 \"${custom.hallId}-${custom.boothCode} ${custom.name}\", 是否更新其内容?",
+            confirmLabel = "更新",
+            dismissLabel = "取消",
+            onDismiss = { pendingAddBooth = null },
+            onConfirm = {
+                pendingAddBooth = null
+                commitAddBooth(custom, isUpdate = true)
             }
         )
     }

@@ -117,13 +117,26 @@ function escapeHtml(value) {
   return String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
 }
 
+function showLogin() {
+  mainEl.classList.add('hidden')
+  loginEl.classList.remove('hidden')
+  document.getElementById('login-error').classList.add('hidden')
+}
+
 async function api(route, method, body) {
   const response = await fetch('/api/' + route, {
     method: method || 'GET',
     headers: { 'Content-Type': 'application/json', 'X-Expo-Admin': '1' },
     body: body ? JSON.stringify(body) : undefined,
   })
-  const payload = await response.json()
+  let payload = null
+  try { payload = await response.json() } catch (_error) { payload = { ok: false } }
+  if (response.status === 401 && route !== 'login') {
+    showLogin()
+    const error = new Error('登录已过期, 请重新登录')
+    error.expired = true
+    throw error
+  }
   if (!response.ok || !payload.ok) throw new Error(payload.error || 'request failed')
   return payload
 }
@@ -192,7 +205,7 @@ listEl.addEventListener('click', async event => {
     }
     await load()
   } catch (error) {
-    window.alert(error.message)
+    if (!error.expired) window.alert(error.message)
   }
 })
 </script>

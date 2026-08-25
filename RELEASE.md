@@ -1,0 +1,63 @@
+# Release 0.0.18 (security + HTTPS) — 执行清单
+
+按顺序执行，每步成功后继续。全部命令在仓库根目录 `C:\Users\yyyak\Desktop\应用\AI应用\CJ2026-长期` 的 PowerShell 中运行。
+
+## 0. 前置确认
+- 域名解析：`nslookup 269278.xyz` 应返回 `101.37.21.166`
+- 本地 shell 可用（若 `bash` 工具仍报 terminal inspection 错误，请在本机 PowerShell 手动执行以下命令）
+
+## 1. JS 语法检查
+```powershell
+node --check server\server.js
+node --check admin\admin-server.js
+```
+
+## 2. 服务器签发 Let's Encrypt 证书（一次性，用你的邮箱替换 <email>）
+```powershell
+ssh -i $env:USERPROFILE\.ssh\gptvoice_id_ed25519 root@101.37.21.166 "apt-get update && apt-get install -y certbot python3-certbot-nginx && certbot certonly --webroot -w /usr/share/nginx/html -d 269278.xyz --non-interactive --agree-tos -m <email>"
+```
+
+## 3. 部署 server.js + nginx HTTPS 配置
+```powershell
+powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -DeployNginx
+```
+
+## 4. 全链路 E2E（提交→无签名 401→带签名 200→admin 登录/列表/回复→App 端可见）
+```powershell
+powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -AdminPassword <admin密码> -RunLocalAdminTests -Cleanup
+```
+
+## 5. 构建（Debug + Lint + Release）
+```powershell
+$env:GRADLE_USER_HOME='C:/Users/yyyak/Desktop/应用/AI应用/CJ2026-长期/.gradle-home'
+& 'C:/Users/yyyak/.gradle/wrapper/dists/gradle-8.7-bin/bhs2wmbdwecv87pi65oeuq5iu/gradle-8.7/bin/gradle.bat' :app:assembleDebug :app:lintDebug :app:assembleRelease --no-daemon --console=plain
+```
+三项均须通过；lint 无 error。
+
+## 6. 复制 APK 到桌面并发布更新
+```powershell
+Copy-Item app\build\outputs\apk\release\app-release.apk "$env:USERPROFILE\Desktop\ExpoPlanner-V0.0.18.apk"
+powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -PublishApk "$env:USERPROFILE\Desktop\ExpoPlanner-V0.0.18.apk"
+```
+随后在服务器写 `/var/lib/expo-suggestions/app-messages.json`：
+```json
+{ "notices": [], "update": { "versionCode": 19, "versionName": "0.0.18", "title": "新版本 0.0.18", "body": "安全更新", "url": "https://269278.xyz/ExpoPlanner.apk" } }
+```
+并 `chown www:www` 该文件。老版本 App 会自动提示更新。
+
+## 7. 提交与打 tag
+```powershell
+git add -A
+git commit -m "security: 全链路HTTPS(269278.xyz)/更新域名白名单+APK签名校验/服务端更新消息校验/限流Map淘汰/导入防护/commit()/WindowInsets迁移/重名与空导入提示/admin会话续签与401回登录; V0.0.18"
+git tag v0.0.18
+git --no-pager log --oneline -3
+```
+确认 `git status` 干净（凭据文件必须仍被 .gitignore 忽略）。
+
+## 8. 完成标准
+- [ ] `curl https://269278.xyz/api/app/messages` 返回 200
+- [ ] `curl http://269278.xyz/api/app/messages -I` 返回 301 到 https
+- [ ] 无签名 GET /api/suggestions 返回 401；带 sig 返回 200
+- [ ] admin 回复在 App 端 `GET /api/suggestions` 可见
+- [ ] assembleDebug / lintDebug / assembleRelease 全通过
+- [ ] git tag v0.0.18 存在，工作区干净

@@ -11,7 +11,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 object SuggestionApi {
-    const val ENDPOINT = "http://101.37.21.166/api/suggestions"
+    const val ENDPOINT = "https://269278.xyz/api/suggestions"
     private const val MAX_RESPONSE_BYTES = 1024 * 1024
 
     private fun readLimited(connection: HttpURLConnection): String {
