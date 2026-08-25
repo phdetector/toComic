@@ -41,6 +41,8 @@ function startTunnel() {
     'root@101.37.21.166',
     '-i', sshKey,
     '-o', 'BatchMode=yes',
+      '-o', 'ServerAliveInterval=30',
+      '-o', 'ServerAliveCountMax=4',
     '-o', 'StrictHostKeyChecking=accept-new',
     '-o', `UserKnownHostsFile=${path.join(os.tmpdir(), 'expo-admin-known-hosts')}`,
   ], { stdio: 'ignore' })
