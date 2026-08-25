@@ -1,12 +1,13 @@
 # Deploy expo-suggestions server + run end-to-end verification.
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -AdminPassword <password> [-SkipDeploy] [-DeployNginx] [-PublishApk <apk-path>] [-RunLocalAdminTests] [-Cleanup]
+#   powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -AdminUsername <username> -AdminPassword <password> [-SkipDeploy] [-DeployNginx] [-PublishApk <apk-path>] [-RunLocalAdminTests] [-Cleanup]
 # One-time HTTPS setup (requires DNS A record 269278.xyz -> 101.37.21.166 already resolving):
 #   ssh -i $env:USERPROFILE\.ssh\gptvoice_id_ed25519 root@101.37.21.166 `
 #     "apt-get update && apt-get install -y certbot python3-certbot-nginx && certbot certonly --webroot -w /usr/share/nginx/html -d 269278.xyz --non-interactive --agree-tos -m <email>"
 # Then run this script with -DeployNginx once.
 
 param(
+    [string]$AdminUsername = "",
     [string]$AdminPassword = "",
     [switch]$SkipDeploy,
     [switch]$DeployNginx,
@@ -16,6 +17,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($RunLocalAdminTests -and -not $AdminUsername) {
+    Fail '-RunLocalAdminTests requires -AdminUsername (never hardcode admin usernames)'
+}
 
 $ServerHost   = '101.37.21.166'
 $ServerUser   = 'root'
@@ -45,25 +50,26 @@ if ($LASTEXITCODE -ne 0) { Fail 'admin-server.js syntax check failed' }
 # ---------- 2. deploy ----------
 if (-not $SkipDeploy) {
     Info "scp server.js -> $ServerHost`:$RemoteDir/server.js"
-    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no `
+    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new `
         (Join-Path $PSScriptRoot 'server.js') "${ServerUser}@${ServerHost}:$RemoteDir/server.js"
     if ($LASTEXITCODE -ne 0) { Fail 'scp failed' }
 
     Info 'restart expo-suggestions service'
-    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} `
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} `
         'chown www:www /opt/expo-suggestions/server.js && systemctl restart expo-suggestions && sleep 1 && systemctl is-active expo-suggestions'
     if ($LASTEXITCODE -ne 0) { Fail 'service restart failed' }
     Ok 'deployed and service is active'
 }
 
 # ---------- 2b. nginx config deploy (first time / after TLS changes) ----------
+# The live web server is the BT panel nginx; our config ships as a vhost extension.
 if ($DeployNginx) {
-    Info 'deploying nginx-default.conf'
-    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no `
-        (Join-Path $PSScriptRoot 'nginx-default.conf') "${ServerUser}@${ServerHost}:/etc/nginx/conf.d/default.conf"
+    Info 'deploying nginx-extension.conf -> panel vhost extension'
+    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new `
+        (Join-Path $PSScriptRoot 'nginx-extension.conf') "${ServerUser}@${ServerHost}:/www/server/panel/vhost/nginx/extension/269278.xyz/security.conf"
     if ($LASTEXITCODE -ne 0) { Fail 'nginx scp failed' }
-    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} `
-        'nginx -t && systemctl reload nginx'
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} `
+        '/etc/init.d/nginx reload'
     if ($LASTEXITCODE -ne 0) { Fail 'nginx reload failed' }
     Ok 'nginx reloaded'
 }
@@ -72,10 +78,10 @@ if ($DeployNginx) {
 if ($PublishApk -ne '') {
     if (-not (Test-Path $PublishApk)) { Fail "APK not found: $PublishApk" }
     Info 'publishing APK -> https://269278.xyz/ExpoPlanner.apk'
-    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no `
+    scp -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new `
         $PublishApk "${ServerUser}@${ServerHost}:/usr/share/nginx/html/ExpoPlanner.apk"
     if ($LASTEXITCODE -ne 0) { Fail 'APK publish failed' }
-    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} `
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} `
         'chmod 644 /usr/share/nginx/html/ExpoPlanner.apk'
     if ($LASTEXITCODE -ne 0) { Fail 'APK chmod failed' }
     Ok 'APK published; update /var/lib/expo-suggestions/app-messages.json with: { update: { versionCode, versionName, title, body, url: "https://269278.xyz/ExpoPlanner.apk" } }'
@@ -105,10 +111,14 @@ try {
 
 $secret = $submit.secret
 if (-not $secret) { Fail 'submit did not return a secret' }
-$sig = ''
-$hmac = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($secret))
-$sig = [BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($clientId))).Replace('-', '').ToLower()
-$list = Invoke-RestMethod -Uri "$publicApi/suggestions?clientId=$clientId&sig=$sig" -TimeoutSec 20
+function Get-ClientSig($sid) {
+    $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $hmac = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($secret))
+    $sig = [BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes("$sid`:$ts"))).Replace('-', '').ToLower()
+    return @{ sig = $sig; ts = $ts }
+}
+$auth = Get-ClientSig $clientId
+$list = Invoke-RestMethod -Uri "$publicApi/suggestions?clientId=$clientId&sig=$($auth.sig)&ts=$($auth.ts)" -TimeoutSec 20
 if (-not $list.ok -or @($list.suggestions).Count -lt 1) { Fail 'GET with signature failed' }
 Ok "GET with signature ok, suggestions=$(@($list.suggestions).Count)"
 
@@ -121,7 +131,7 @@ if ($RunLocalAdminTests) {
         -WorkingDirectory (Join-Path (Join-Path $PSScriptRoot '..') 'admin') -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 4
     try {
-        $login = Invoke-JsonPost "$AdminUrl/api/login" @{} (@{ username = 'admin_c85ee154'; password = $AdminPassword } | ConvertTo-Json)
+        $login = Invoke-JsonPost "$AdminUrl/api/login" @{} (@{ username = $AdminUsername; password = $AdminPassword } | ConvertTo-Json)
         if (-not $login.ok) { Fail 'admin login failed' }
         Ok 'admin login ok'
 
@@ -135,7 +145,8 @@ if ($RunLocalAdminTests) {
         Ok 'admin reply ok'
 
         Start-Sleep -Seconds 2
-        $after = Invoke-RestMethod -Uri "$publicApi/suggestions?clientId=$clientId&sig=$sig" -TimeoutSec 20
+        $auth = Get-ClientSig $clientId
+        $after = Invoke-RestMethod -Uri "$publicApi/suggestions?clientId=$clientId&sig=$($auth.sig)&ts=$($auth.ts)" -TimeoutSec 20
         $item = $after.suggestions | Where-Object { $_.id -eq $submit.suggestion.id }
         if ($null -eq $item -or $item.reply -ne 'E2E 回复') { Fail 'reply not visible from App side' }
         Ok 'reply visible from App side (reply E2E passed)'
@@ -148,7 +159,7 @@ if ($RunLocalAdminTests) {
 if ($Cleanup) {
     Info 'removing the E2E test suggestion from the server database'
     $escapedId = $submit.suggestion.id -replace '[^a-zA-Z0-9-]', ''
-    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=no ${ServerUser}@${ServerHost} "node /opt/expo-suggestions/cleanup-suggestion.js $escapedId"
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} "node /opt/expo-suggestions/cleanup-suggestion.js $escapedId"
     if ($LASTEXITCODE -ne 0) { Fail 'test-data cleanup failed' }
     Ok "cleaned test suggestion $escapedId"
 }

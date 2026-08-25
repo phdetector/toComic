@@ -18,4 +18,13 @@ class SuggestionStore(context: Context) {
     fun saveClientSecret(secret: String) {
         prefs.edit().putString("client_secret", secret).commit()
     }
+
+    // Recovery flow: when the local secret is lost there is no way to prove
+    // ownership of the old clientId (server never re-issues it), so we start a
+    // fresh identity. Old suggestion history becomes unreadable by design.
+    fun resetIdentity(): String {
+        val id = UUID.randomUUID().toString()
+        prefs.edit().putString("client_id", id).remove("client_secret").commit()
+        return id
+    }
 }

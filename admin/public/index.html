@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Expo Planner 建议管理</title>
+<title>toComic 建议管理</title>
 <style>
 :root{--bg:#f5f4ee;--ink:#141413;--surface:#ffffff;--border:#e3e0d8;--accent:#da7756;--blue:#66ccff;--muted:#7a766c;}
 @media (prefers-color-scheme:dark){:root{--bg:#262624;--ink:#f5f4ee;--surface:#2f2e2c;--border:#46443f;--muted:#b6b0a4;}}
@@ -15,6 +15,7 @@ header h1{font-size:17px;font-weight:700}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.ghost{background:transparent}
 .btn.on{background:var(--blue);border-color:var(--blue);color:#00324d}
+.btn.wide{width:100%}
 .layout{display:grid;grid-template-columns:3fr 1fr;gap:16px;padding:16px 18px;max-width:1200px;margin:0 auto}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px}
 .card .row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
@@ -25,7 +26,10 @@ header h1{font-size:17px;font-weight:700}
 .card .actions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
 .sidebar .card h2{font-size:14px;margin-bottom:8px}
 .filter{display:flex;flex-direction:column;gap:6px}
+.viewhead{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.viewhead h2{font-size:16px;font-weight:700}
 .hidden{display:none}
+#more{padding:8px 0}
 #login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center}
 #login form{width:min(360px,90vw);background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:10px}
 #login h1{font-size:18px}
@@ -36,26 +40,36 @@ header h1{font-size:17px;font-weight:700}
 </head>
 <body>
 <header>
-  <h1>Expo Planner 建议管理</h1>
+  <h1>toComic 建议管理</h1>
   <span id="stats" style="margin-left:auto;color:var(--muted);font-size:13px"></span>
   <button class="btn ghost" id="logout" style="margin-left:8px">退出</button>
 </header>
 
 <div class="layout hidden" id="main">
-  <section id="list"></section>
+  <section id="listwrap">
+    <div class="viewhead hidden" id="archive-head">
+      <button class="btn" id="archive-back">返回</button>
+      <h2>已归档</h2>
+    </div>
+    <div id="list"></div>
+    <div id="more" class="hidden"><button class="btn wide" id="load-more">加载更多</button></div>
+  </section>
   <aside class="sidebar">
-    <div class="card">
+    <div class="card" id="filter-card">
       <h2>筛选</h2>
       <div class="filter">
         <button class="btn on" data-filter="all">全部</button>
         <button class="btn" data-filter="pending">未处理</button>
         <button class="btn" data-filter="done">已处理</button>
-        <button class="btn" data-filter="archived">已归档</button>
       </div>
     </div>
     <div class="card">
       <h2>收藏</h2>
-      <button class="btn" id="favorites">查看收藏</button>
+      <button class="btn wide" id="favorites">查看收藏</button>
+    </div>
+    <div class="card">
+      <h2>归档</h2>
+      <button class="btn wide" id="open-archive">查看归档</button>
     </div>
   </aside>
 </div>
@@ -71,45 +85,74 @@ header h1{font-size:17px;font-weight:700}
 </div>
 
 <script>
-const state = { filter: 'all', favorites: false, data: [] }
+const PAGE_SIZE = 50
+const state = { filter: 'all', favorites: false, view: 'main', data: [], page: 1, hasMore: false, total: 0 }
 const listEl = document.getElementById('list')
 const loginEl = document.getElementById('login')
 const mainEl = document.getElementById('main')
 const statsEl = document.getElementById('stats')
+const moreEl = document.getElementById('more')
+const loadMoreEl = document.getElementById('load-more')
+const archiveHeadEl = document.getElementById('archive-head')
+const filterCardEl = document.getElementById('filter-card')
 
 function fmt(ms) { if (!ms) return ''; const d = new Date(ms); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` }
 function done(item) { return Boolean(item.reply) || Boolean(item.processed) }
 
-function render() {
+function visibleItems() {
   let items = state.data.slice()
-  if (state.filter === 'pending') items = items.filter(i => !done(i) && !i.archived)
-  else if (state.filter === 'done') items = items.filter(i => done(i) && !i.archived)
-  else if (state.filter === 'archived') items = items.filter(i => i.archived)
-  else if (state.favorites) items = items.filter(i => i.favorite)
+  if (state.view === 'archive') {
+    items = items.filter(i => i.archived)
+  } else if (state.favorites) {
+    items = items.filter(i => i.favorite)
+  } else {
+    items = items.filter(i => !i.archived)
+    if (state.filter === 'pending') items = items.filter(i => !done(i))
+    else if (state.filter === 'done') items = items.filter(i => done(i))
+  }
   items.sort((a, b) => { const ad = done(a), bd = done(b); if (ad !== bd) return ad ? 1 : -1; return (a.submittedAt || 0) - (b.submittedAt || 0) })
+  return items
+}
 
+function render() {
+  const items = visibleItems()
   const pending = state.data.filter(i => !done(i)).length
   const replied = state.data.filter(done).length
-  statsEl.textContent = `共 ${state.data.length} 条 / 未处理 ${pending} / 已处理 ${replied}`
+  const archived = state.data.filter(i => i.archived).length
+  statsEl.textContent = `共 ${state.total} 条 / 未处理 ${pending} / 已处理 ${replied} / 已归档 ${archived}`
+  archiveHeadEl.classList.toggle('hidden', state.view !== 'archive')
+  filterCardEl.classList.toggle('hidden', state.view !== 'main')
 
   listEl.innerHTML = ''
   for (const item of items) {
     const card = document.createElement('div')
     card.className = 'card'
     card.dataset.id = item.id
-    const archived = item.archived ? '已归档' : (done(item) ? '已处理' : '未处理')
+    const status = item.archived ? '已归档' : (done(item) ? '已处理' : '未处理')
     card.innerHTML = `
-      <div class="row"><h2>${escapeHtml(item.title)}</h2><span class="time">${fmt(item.submittedAt)} · ${archived}</span></div>
+      <div class="row"><h2>${escapeHtml(item.title)}</h2><span class="time">${fmt(item.submittedAt)} · ${status}</span></div>
       <p>${escapeHtml(item.content)}</p>
       <div class="row"><span class="time">版本 ${escapeHtml(item.appVersion || '-')} · ${escapeHtml(item.deviceModel || '-')}</span>
         <span class="time">${item.favorite ? '已收藏' : ''}</span></div>
+      ${state.view === 'archive' ? `
+      <div class="actions">
+        <button class="btn" data-act="archive">取消归档</button>
+      </div>` : `
       <textarea placeholder="输入回复">${escapeHtml(item.reply || '')}</textarea>
       <div class="actions">
         <button class="btn primary" data-act="reply">提交回复</button>
         <button class="btn ${item.favorite ? 'on' : ''}" data-act="favorite">${item.favorite ? '取消收藏' : '收藏'}</button>
-        <button class="btn ${item.archived ? 'on' : ''}" data-act="archive">${item.archived ? '取消归档' : '归档'}</button>
-      </div>`
+        <button class="btn" data-act="archive">归档</button>
+      </div>`}
+    `
     listEl.appendChild(card)
+  }
+  moreEl.classList.toggle('hidden', !state.hasMore)
+  if (items.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'card'
+    empty.textContent = state.view === 'archive' ? '暂无已归档建议' : '暂无建议'
+    listEl.appendChild(empty)
   }
 }
 
@@ -142,8 +185,21 @@ async function api(route, method, body) {
 }
 
 async function load() {
-  const payload = await api('suggestions')
+  state.page = 1
+  const payload = await api(`suggestions?page=1&limit=${PAGE_SIZE}`)
   state.data = payload.suggestions || []
+  state.total = payload.total || state.data.length
+  state.hasMore = Boolean(payload.hasMore)
+  render()
+}
+
+async function loadMore() {
+  state.page += 1
+  const payload = await api(`suggestions?page=${state.page}&limit=${PAGE_SIZE}`)
+  const more = payload.suggestions || []
+  state.data = state.data.concat(more)
+  state.total = payload.total || state.total
+  state.hasMore = Boolean(payload.hasMore)
   render()
 }
 
@@ -164,6 +220,19 @@ document.getElementById('login-form').addEventListener('submit', async event => 
 })
 
 document.getElementById('logout').addEventListener('click', () => location.reload())
+
+loadMoreEl.addEventListener('click', () => { loadMore().catch(e => { if (!e.expired) window.alert(e.message) }) })
+
+document.getElementById('open-archive').addEventListener('click', () => {
+  state.view = 'archive'
+  state.favorites = false
+  render()
+})
+
+document.getElementById('archive-back').addEventListener('click', () => {
+  state.view = 'main'
+  render()
+})
 
 document.querySelectorAll('[data-filter]').forEach(button => {
   button.addEventListener('click', () => {

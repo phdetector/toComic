@@ -63,9 +63,14 @@ function readClientSecrets() {
   return map
 }
 
-function issueClientSecret(clientId) {
-  const secrets = readClientSecrets()
-  const existing = secrets.get(clientId)
+const SIGNATURE_WINDOW_MS = 5 * 60 * 1000
+
+function existingClientSecret(clientId) {
+  return readClientSecrets().get(clientId) || ''
+}
+
+function createClientSecret(clientId) {
+  const existing = existingClientSecret(clientId)
   if (existing) return existing
   const secret = randomBytes(24).toString('hex')
   fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -73,14 +78,26 @@ function issueClientSecret(clientId) {
   return secret
 }
 
-function validClientSignature(clientId, signature) {
-  const secrets = readClientSecrets()
-  const secret = secrets.get(clientId)
+function rotateClientSecret(clientId) {
+  const secret = randomBytes(24).toString('hex')
+  fs.mkdirSync(DATA_DIR, { recursive: true })
+  fs.appendFileSync(CLIENT_SECRETS_FILE, JSON.stringify({ clientId, secret }) + '\n')
+  return secret
+}
+
+function validClientSignature(clientId, signature, timestamp) {
+  const secret = existingClientSecret(clientId)
   if (!secret || !signature) return false
-  const expected = createHmac('sha256', secret).update(clientId).digest('hex')
+  const ts = Number(timestamp)
+  if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > SIGNATURE_WINDOW_MS) return false
+  const expected = createHmac('sha256', secret).update(`${clientId}:${ts}`).digest('hex')
   const provided = String(signature)
   if (provided.length !== expected.length) return false
   return timingSafeEqual(Buffer.from(expected), Buffer.from(provided))
+}
+
+function clientAddress(req) {
+  return String(req.headers['x-real-ip'] || req.socket.remoteAddress || '').trim().slice(0, 100)
 }
 
 function ipHash(ip) {
@@ -112,7 +129,7 @@ function sanitizeUpdate(update) {
   } catch (_error) {
     return null
   }
-  if (!ALLOWED_UPDATE_HOSTS.some(entry => host === entry || host.endsWith('.' + entry))) return null
+  if (!ALLOWED_UPDATE_HOSTS.includes(host)) return null
   return {
     versionCode,
     versionName: String(update.versionName || '').slice(0, 40),
@@ -155,19 +172,22 @@ function send(res, code, body) {
   res.end(JSON.stringify(body))
 }
 
-function readBody(req, callback) {
+function readBody(req, res, callback) {
   let raw = ''
   let size = 0
   req.setEncoding('utf8')
   req.on('data', chunk => {
     size += Buffer.byteLength(chunk)
     if (size > MAX_BODY) {
+      send(res, 413, { ok: false, error: 'body too large' })
       req.destroy()
       return
     }
     raw += chunk
   })
-  req.on('end', () => callback(raw))
+  req.on('end', () => {
+    if (!res.writableEnded) callback(raw)
+  })
 }
 
 const db = new DatabaseSync(DB_FILE)
@@ -224,9 +244,8 @@ function migrateLegacyJsonl() {
 
 migrateLegacyJsonl()
 
-function readSuggestions() {
-  const rows = db.prepare('SELECT * FROM suggestions').all()
-  return rows.map(row => ({
+function rowToSuggestion(row) {
+  return {
     id: row.id,
     clientId: row.clientId,
     title: row.title,
@@ -242,7 +261,11 @@ function readSuggestions() {
     favorite: Boolean(row.favorite),
     archived: Boolean(row.archived),
     ipHash: row.ipHash,
-  }))
+  }
+}
+
+function readSuggestions() {
+  return db.prepare('SELECT * FROM suggestions').all().map(rowToSuggestion)
 }
 
 function appendSuggestion(record) {
@@ -362,11 +385,12 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && pathname === '/api/suggestions') {
     const clientId = String(requestUrl.searchParams.get('clientId') || '').trim().slice(0, 100)
     const signature = String(requestUrl.searchParams.get('sig') || '')
+    const timestamp = String(requestUrl.searchParams.get('ts') || '')
     if (clientId.length === 0) {
       send(res, 400, { ok: false, error: 'clientId is required' })
       return
     }
-    if (!validClientSignature(clientId, signature)) {
+    if (!validClientSignature(clientId, signature, timestamp)) {
       send(res, 401, { ok: false, error: 'unauthorized' })
       return
     }
@@ -383,19 +407,43 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  if (req.method === 'POST' && pathname === '/api/suggestions/rotate') {
+    const clientIp = clientAddress(req)
+    if (!allowRequest(clientIp)) {
+      send(res, 429, { ok: false, error: 'too many requests' })
+      return
+    }
+    readBody(req, res, raw => {
+      let data
+      try {
+        data = JSON.parse(raw)
+      } catch (_error) {
+        send(res, 400, { ok: false, error: 'invalid json' })
+        return
+      }
+      const clientId = String(data && data.clientId || '').trim().slice(0, 100)
+      const signature = String(data && data.sig || '')
+      const timestamp = String(data && data.ts || '')
+      if (!clientId || !validClientSignature(clientId, signature, timestamp)) {
+        send(res, 401, { ok: false, error: 'unauthorized' })
+        return
+      }
+      const secret = rotateClientSecret(clientId)
+      send(res, 200, { ok: true, secret })
+    })
+    return
+  }
+
   if (req.method !== 'POST' || pathname !== '/api/suggestions') {
     send(res, 404, { ok: false, error: 'not found' })
     return
   }
-  const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')
-    .split(',')[0]
-    .trim()
-    .slice(0, 100)
+  const clientIp = clientAddress(req)
   if (!allowRequest(clientIp)) {
     send(res, 429, { ok: false, error: 'too many requests' })
     return
   }
-  readBody(req, raw => {
+  readBody(req, res, raw => {
     let data
     try {
       data = JSON.parse(raw)
@@ -418,7 +466,8 @@ const server = http.createServer((req, res) => {
       send(res, 400, { ok: false, error: 'clientId is required' })
       return
     }
-    const clientSecret = issueClientSecret(clientId)
+    const hadSecret = Boolean(existingClientSecret(clientId))
+    const clientSecret = createClientSecret(clientId)
     const record = {
       id: randomUUID(),
       clientId,
@@ -435,7 +484,7 @@ const server = http.createServer((req, res) => {
     }
     try {
       appendSuggestion(record)
-      send(res, 200, { ok: true, suggestion: record, secret: clientSecret })
+      send(res, 200, { ok: true, suggestion: record, ...(hadSecret ? {} : { secret: clientSecret }) })
     } catch (error) {
       console.error('failed to store suggestion', error)
       send(res, 500, { ok: false, error: 'storage failed' })
@@ -460,7 +509,7 @@ const adminServer = http.createServer((req, res) => {
   const pathname = requestUrl.pathname
 
   if (req.method === 'POST' && pathname === '/admin/login') {
-    readBody(req, raw => {
+    readBody(req, res, raw => {
       const ip = String(req.socket.remoteAddress || '').slice(0, 100)
       const attempts = loginAttempts(ip)
       if (attempts.lockedUntil > Date.now()) {
@@ -503,14 +552,22 @@ const adminServer = http.createServer((req, res) => {
 
   if (req.method === 'GET' && pathname === '/admin/suggestions') {
     try {
-      const suggestions = readSuggestions()
-        .sort((left, right) => {
-          const leftDone = Boolean(left.reply) || Boolean(left.processed)
-          const rightDone = Boolean(right.reply) || Boolean(right.processed)
-          if (leftDone !== rightDone) return leftDone ? 1 : -1
-          return (left.submittedAt || 0) - (right.submittedAt || 0)
-        })
-      send(res, 200, { ok: true, suggestions })
+      const page = Math.max(1, Number(requestUrl.searchParams.get('page')) || 1)
+      const limit = Math.min(200, Math.max(1, Number(requestUrl.searchParams.get('limit')) || 50))
+      const total = db.prepare('SELECT COUNT(*) AS c FROM suggestions').get().c
+      const rows = db.prepare(`
+        SELECT * FROM suggestions
+        ORDER BY (reply != '' OR processed = 1), submittedAt ASC
+        LIMIT ? OFFSET ?
+      `).all(limit, (page - 1) * limit)
+      send(res, 200, {
+        ok: true,
+        total,
+        page,
+        limit,
+        hasMore: page * limit < total,
+        suggestions: rows.map(rowToSuggestion),
+      })
     } catch (error) {
       console.error('failed to list suggestions', error)
       send(res, 500, { ok: false, error: 'storage failed' })
@@ -519,7 +576,7 @@ const adminServer = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && ['/admin/reply', '/admin/favorite', '/admin/archive'].includes(pathname)) {
-    readBody(req, raw => {
+    readBody(req, res, raw => {
       let data
       try {
         data = JSON.parse(raw)

@@ -62,6 +62,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -667,8 +668,9 @@ private fun SettingsScreen(onBack: () -> Unit) {
 private fun MySuggestionsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val suggestionStore = remember { SuggestionStore(context) }
-    val clientId = remember { suggestionStore.clientId() }
-    val clientSecret = remember { suggestionStore.clientSecret() }
+    var identity by remember { mutableStateOf(suggestionStore.clientId() to suggestionStore.clientSecret()) }
+    val clientId = identity.first
+    val clientSecret = identity.second
     var suggestions by remember { mutableStateOf<List<Suggestion>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var loadFailed by remember { mutableStateOf(false) }
@@ -713,19 +715,33 @@ private fun MySuggestionsScreen(onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 loadFailed -> Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressScale()
-                        .clickable { refreshKey += 1 },
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    Text(
-                        text = "加载失败, 点击重试",
+                    Column(
                         modifier = Modifier.padding(16.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = if (clientSecret.isBlank()) "身份凭证已丢失, 历史建议无法读取" else "加载失败, 身份凭证可能已失效",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(onClick = { refreshKey += 1 }) {
+                                Text("重试")
+                            }
+                            Button(
+                                onClick = {
+                                    identity = suggestionStore.resetIdentity() to ""
+                                    refreshKey += 1
+                                }
+                            ) {
+                                Text("重置身份")
+                            }
+                        }
+                    }
                 }
                 suggestions.isEmpty() -> Text(
                     text = "暂无建议",
@@ -2281,7 +2297,7 @@ private fun BoothCard(
             ) {
                 Column(
                     modifier = Modifier
-                        .width(108.dp)
+                        .width(118.dp)
                         .fillMaxHeight(),
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -2295,7 +2311,7 @@ private fun BoothCard(
                         )
                         Text(
                             text = "至",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2321,7 +2337,7 @@ private fun BoothCard(
                         )
                         Text(
                             text = "至",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2393,7 +2409,7 @@ private fun TimeDigitField(value: String, onValueChange: (String) -> Unit) {
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.width(38.dp),
+        modifier = Modifier.width(46.dp),
         singleLine = true,
         textStyle = MaterialTheme.typography.titleSmall.copy(fontFamily = CodeFont, textAlign = TextAlign.Center),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

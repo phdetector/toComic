@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ExpoPlanner"
+rootProject.name = "toComic"
 include(":app")

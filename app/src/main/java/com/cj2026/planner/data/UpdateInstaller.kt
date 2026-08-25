@@ -29,6 +29,7 @@ object UpdateInstaller {
     suspend fun download(context: Context, url: String): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
             val dir = File(context.cacheDir, "updates").apply { mkdirs() }
+            dir.listFiles()?.forEach { if (it.isFile) it.delete() }
             val target = File(dir, "update-${System.currentTimeMillis()}.apk")
             val connection = URL(url).openConnection() as HttpURLConnection
             try {

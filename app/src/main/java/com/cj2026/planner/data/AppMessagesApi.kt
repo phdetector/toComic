@@ -18,7 +18,7 @@ object AppMessagesApi {
         if (!value.startsWith("https://")) return false
         return runCatching {
             val host = java.net.URI(value).host?.lowercase()
-            host != null && ALLOWED_UPDATE_HOSTS.any { it == host || host.endsWith(".$it") }
+            host != null && host in ALLOWED_UPDATE_HOSTS
         }.getOrDefault(false)
     }
 

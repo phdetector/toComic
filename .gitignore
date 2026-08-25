@@ -29,6 +29,10 @@ Thumbs.db
 /admin/admin-credentials.json
 /admin/admin-secret.env
 
+# Release signing (independent release keystore, never commit)
+/keystore/release.keystore
+/keystore.properties
+
 # Stray zero-byte artifacts from the font download step
 /serif
 /preview/serif

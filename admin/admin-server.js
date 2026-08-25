@@ -27,7 +27,7 @@ function startTunnel() {
     'root@101.37.21.166',
     '-i', sshKey,
     '-o', 'BatchMode=yes',
-    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'StrictHostKeyChecking=accept-new',
     '-o', `UserKnownHostsFile=${path.join(os.tmpdir(), 'expo-admin-known-hosts')}`,
   ], { stdio: 'ignore' })
   tunnelProcess.on('exit', () => { tunnelProcess = null })
@@ -50,7 +50,7 @@ function json(res, code, body) {
   res.end(JSON.stringify(body))
 }
 
-function readBody(req) {
+function readBody(req, res) {
   return new Promise((resolve, reject) => {
     let raw = ''
     let size = 0
@@ -58,13 +58,14 @@ function readBody(req) {
     req.on('data', chunk => {
       size += Buffer.byteLength(chunk)
       if (size > 64 * 1024) {
-        reject(new Error('body too large'))
+        json(res, 413, { ok: false, error: 'body too large' })
         req.destroy()
         return
       }
       raw += chunk
     })
     req.on('end', () => {
+      if (res.writableEnded) return
       try { resolve(JSON.parse(raw || '{}')) } catch (error) { reject(error) }
     })
     req.on('error', reject)
@@ -124,7 +125,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && pathname === '/api/login') {
     try {
-      const body = await readBody(req)
+      const body = await readBody(req, res)
       const response = await fetch(`${REMOTE}/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,8 +170,18 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && pathname === '/api/suggestions') {
     try {
-      if (Date.now() - lastSync > 60 * 1000) await refresh()
-      json(res, 200, { ok: true, suggestions: cache })
+      const page = Number(url.searchParams.get('page')) || 1
+      const limit = Number(url.searchParams.get('limit')) || 50
+      const response = await fetch(`${REMOTE}/admin/suggestions?page=${page}&limit=${limit}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (response.status === 401) {
+        token = null
+        throw new UnauthorizedError()
+      }
+      if (!response.ok) throw new Error('remote fetch failed')
+      adoptRenewedToken(response)
+      json(res, 200, await response.json())
     } catch (error) {
       errorResponse(res, error)
     }
@@ -179,7 +190,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && ['/api/reply', '/api/favorite', '/api/archive'].includes(pathname)) {
     try {
-      const body = await readBody(req)
+      const body = await readBody(req, res)
       await remotePost(pathname.replace('/api/', '/admin/'), body)
       json(res, 200, { ok: true })
     } catch (error) {

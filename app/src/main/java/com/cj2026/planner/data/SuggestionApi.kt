@@ -32,11 +32,14 @@ object SuggestionApi {
         }
     }
 
-    private fun signature(clientId: String, secret: String): String {
+    const val SIGNATURE_WINDOW_MS = 5 * 60 * 1000L
+
+    private fun signature(clientId: String, secret: String, timestamp: Long): String {
         if (secret.isBlank()) return ""
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
-        return mac.doFinal(clientId.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        val message = "$clientId:$timestamp"
+        return mac.doFinal(message.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 
     suspend fun submit(
@@ -83,9 +86,10 @@ object SuggestionApi {
 
     suspend fun list(clientId: String, secret: String): Result<List<Suggestion>> = withContext(Dispatchers.IO) {
         runCatching {
+            val timestamp = System.currentTimeMillis()
             val query = URLEncoder.encode(clientId, Charsets.UTF_8.name())
-            val sig = URLEncoder.encode(signature(clientId, secret), Charsets.UTF_8.name())
-            val connection = URL("$ENDPOINT?clientId=$query&sig=$sig").openConnection() as HttpURLConnection
+            val sig = URLEncoder.encode(signature(clientId, secret, timestamp), Charsets.UTF_8.name())
+            val connection = URL("$ENDPOINT?clientId=$query&sig=$sig&ts=$timestamp").openConnection() as HttpURLConnection
             try {
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 15_000
@@ -113,6 +117,37 @@ object SuggestionApi {
                         )
                     }
                 }
+            } finally {
+                connection.disconnect()
+            }
+        }
+    }
+
+    suspend fun rotate(clientId: String, secret: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val timestamp = System.currentTimeMillis()
+            val connection = URL("$ENDPOINT/rotate").openConnection() as HttpURLConnection
+            try {
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 15_000
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+
+                val payload = JSONObject().apply {
+                    put("clientId", clientId)
+                    put("ts", timestamp)
+                    put("sig", signature(clientId, secret, timestamp))
+                }.toString()
+
+                connection.outputStream.use { stream ->
+                    stream.write(payload.toByteArray(Charsets.UTF_8))
+                }
+
+                val body = readLimited(connection)
+                val code = connection.responseCode
+                if (code !in 200..299) error("suggestion server returned $code")
+                JSONObject(body).optString("secret").takeIf { it.isNotBlank() } ?: error("rotate response missing secret")
             } finally {
                 connection.disconnect()
             }
