@@ -67,3 +67,12 @@ git --no-pager log --oneline -3
 - [ ] admin 回复在 App 端 `GET /api/suggestions` 可见
 - [ ] assembleDebug / lintDebug / assembleRelease 全通过
 - [ ] git tag v0.0.18 存在，工作区干净
+
+## 9. Release 0.0.19（R8 加固分发，2026-08-25 已执行）
+发布 0.0.18 时线上分发的其实是 debug 包（未混淆）。0.0.19 起分发 minified release：
+1. `app/build.gradle.kts`：release 增加 `signingConfig = signingConfigs.getByName("debug")`（签名与历史版本一致，老用户可平滑升级，`UpdateInstaller` 签名校验不受影响）；`versionCode = 20` / `versionName = "0.0.19"`
+2. 构建：`assembleDebug` + `lintDebug` + `assembleRelease` 全通过
+3. 验签：`apksigner verify --print-certs app-release.apk` 证书 SHA-256 `2af69c6e…` 与历史 debug 一致；`aapt dump badging` 无 debuggable；dex ~2MB（debug ~22MB）
+4. 发布：`Copy-Item app\build\outputs\apk\release\app-release.apk` → `deploy.ps1 -PublishApk`；服务器 `app-messages.json` 更新为 `versionCode 20 / 0.0.19` 并 `chown www:www`
+5. 验证：`https://269278.xyz/ExpoPlanner.apk` 下载后 md5 与本地 `app-release.apk` 一致
+6. `git commit` + `git tag v0.0.19`

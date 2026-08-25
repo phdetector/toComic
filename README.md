@@ -4,7 +4,7 @@ A multi-exhibition planner app for Android. The home screen manages exhibition p
 
 ## Version
 
-- Android app: `0.0.18` (`versionCode=19`), package `com.cj2026.expo`, label `Expo Planner`
+- Android app: `0.0.19` (`versionCode=20`), package `com.cj2026.expo`, label `Expo Planner`
 - Android minSdk 26, target/compileSdk 34
 - iOS: source project targeting iOS 26, built only on macOS + Xcode 26
 
@@ -80,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -PublishApk app\build
 Then enable the update prompt by writing `/var/lib/expo-suggestions/app-messages.json` on the server:
 
 ```json
-{ "notices": [], "update": { "versionCode": 19, "versionName": "0.0.18", "title": "新版本 0.0.18", "body": "安全更新", "url": "https://269278.xyz/ExpoPlanner.apk" } }
+{ "notices": [], "update": { "versionCode": 20, "versionName": "0.0.19", "title": "新版本 0.0.19", "body": "安全更新", "url": "https://269278.xyz/ExpoPlanner.apk" } }
 ```
 
 The server re-validates `versionCode` (1..99999) and the update URL host allow-list before serving; the app additionally verifies the APK signature before installing.
@@ -93,7 +93,7 @@ Done:
 - `EXPO_ADMIN_SECRET` required at startup (no default secret); admin login rate-limited (5 failures -> 15 min lock)
 - Per-client HMAC-signed read auth: first submit issues a random secret; `GET /api/suggestions` requires `sig`
 - Storage moved to SQLite (`node:sqlite`) with legacy JSONL migration; no read-modify-write races
-- `allowBackup=false`; release builds use R8 minify + resource shrink
+- `allowBackup=false`; the distributed APK is the R8-minified release (dex ~2 MB vs ~22 MB debug), signed with the same debug key as all previous versions so existing installs update in place (`UpdateInstaller` signature check passes)
 - Admin credential file stores only username/hash/salt (no plaintext); all credential files gitignored
 - Response reads capped at 1 MB (app) and 64 KB bodies (server); import pre-checks file size (5 MB)
 - Import JSON guarded: max nesting depth 64, max 10,000 entries per section; empty import shows "文件内无有效数据"
@@ -104,11 +104,11 @@ Done:
 - `commit()` on identity-critical SharedPreferences writes (client secret, import, booth add/update)
 - Deprecated `systemUiVisibility` replaced by `WindowInsetsControllerCompat`; duplicate-booth saves ask before overwriting
 
-Blocked -> unblocked, in progress: full HTTPS rollout. The domain `269278.xyz` is available; code is switched to `https://269278.xyz` endpoints with the cleartext exception removed, update URLs are HTTPS + host allow-listed (`269278.xyz`/`www`), and updates download in-app with APK signature verification against the installed app before install. Remaining steps: add the DNS A record, issue the Let's Encrypt certificate on the server, deploy the new nginx config, then build and release `0.0.18`.
+HTTPS rollout: complete. `269278.xyz` A record -> `101.37.21.166`; Let's Encrypt certificate issued (webroot), `certbot-renew.timer` enabled and dry-run verified; nginx deployed with TLS 1.2/1.3, HSTS, rate limit and security headers; releases `0.0.16`-`0.0.19` built and published; current published build is `0.0.19` (minified release, same signing key as before).
 
 ## Test status
 
-- `:app:assembleDebug`, `:app:lintDebug` and `:app:assembleRelease` all pass at `0.0.18` (R8 + resource shrink enabled)
+- `:app:assembleDebug`, `:app:lintDebug` and `:app:assembleRelease` all pass at `0.0.19` (R8 + resource shrink enabled, release signed)
 - HTTPS live on `https://269278.xyz`: GET 200, HTTP 301 redirect, HSTS header present
 - Full E2E verified: submit -> no-sig 401 -> signed 200 -> admin login/list/reply -> reply visible from App side
 - Update chain live: APK published at `https://269278.xyz/ExpoPlanner.apk` with host allow-list + signature verification before install

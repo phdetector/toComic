@@ -11,14 +11,15 @@ android {
         applicationId = "com.cj2026.expo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.0.18"
+        versionCode = 20
+        versionName = "0.0.19"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
