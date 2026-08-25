@@ -42,6 +42,7 @@ header h1{font-size:17px;font-weight:700}
 <header>
   <h1>toComic 建议管理</h1>
   <span id="stats" style="margin-left:auto;color:var(--muted);font-size:13px"></span>
+  <span id="ver" style="color:var(--muted);font-size:12px"></span>
   <button class="btn ghost" id="logout" style="margin-left:8px">退出</button>
 </header>
 
@@ -77,10 +78,11 @@ header h1{font-size:17px;font-weight:700}
 <div id="login">
   <form id="login-form">
     <h1>验证身份</h1>
+    <div id="health" style="font-size:13px;color:var(--muted)">正在检测后端服务…</div>
     <input id="username" placeholder="用户名" autocomplete="username">
     <input id="password" type="password" placeholder="密码" autocomplete="current-password">
     <div class="error hidden" id="login-error">验证失败</div>
-    <button class="btn primary" type="submit">登录</button>
+    <button class="btn primary" type="submit" id="login-btn">登录</button>
   </form>
 </div>
 
@@ -95,6 +97,10 @@ const moreEl = document.getElementById('more')
 const loadMoreEl = document.getElementById('load-more')
 const archiveHeadEl = document.getElementById('archive-head')
 const filterCardEl = document.getElementById('filter-card')
+const verEl = document.getElementById('ver')
+const healthEl = document.getElementById('health')
+const loginBtn = document.getElementById('login-btn')
+const UI_VERSION = 2
 
 function fmt(ms) { if (!ms) return ''; const d = new Date(ms); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` }
 function done(item) { return Boolean(item.reply) || Boolean(item.processed) }
@@ -166,12 +172,24 @@ function showLogin() {
   document.getElementById('login-error').classList.add('hidden')
 }
 
+function fetchWithTimeout(url, options = {}, ms = 10000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer))
+}
+
 async function api(route, method, body) {
-  const response = await fetch('/api/' + route, {
-    method: method || 'GET',
-    headers: { 'Content-Type': 'application/json', 'X-Expo-Admin': '1' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let response
+  try {
+    response = await fetchWithTimeout('/api/' + route, {
+      method: method || 'GET',
+      headers: { 'Content-Type': 'application/json', 'X-Expo-Admin': '1' },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch (error) {
+    if (error && error.name === 'AbortError') throw new Error('请求超时, 请检查本地管理端是否仍在运行')
+    throw new Error('无法连接本地管理端: ' + String(error))
+  }
   let payload = null
   try { payload = await response.json() } catch (_error) { payload = { ok: false } }
   if (response.status === 401 && route !== 'login') {
@@ -180,9 +198,41 @@ async function api(route, method, body) {
     error.expired = true
     throw error
   }
+  if (response.status === 403) throw new Error(payload.hint || '页面版本过旧, 请强制刷新(Ctrl+Shift+R)')
   if (!response.ok || !payload.ok) throw new Error(payload.error || 'request failed')
   return payload
 }
+
+// ---- v2 自检 ----
+if (!window.fetch || typeof Promise === 'undefined' || !window.AbortController) {
+  document.getElementById('login-error').classList.remove('hidden')
+  document.getElementById('login-error').textContent = '请使用新版 Chrome/Edge/Firefox 打开本页面'
+}
+
+function showFatal(msg) {
+  const err = document.getElementById('login-error')
+  if (err) { err.classList.remove('hidden'); err.textContent = msg }
+}
+window.addEventListener('error', event => showFatal('页面脚本错误: ' + (event.message || 'unknown')))
+window.addEventListener('unhandledrejection', event => {
+  const reason = event.reason
+  showFatal('请求异常: ' + (reason && reason.message ? reason.message : String(reason)))
+})
+
+verEl.textContent = 'v' + UI_VERSION
+function checkHealth() {
+  fetchWithTimeout('/api/ping', {}, 5000)
+    .then(r => r.json().catch(() => ({})))
+    .then(p => {
+      healthEl.textContent = (p && p.remote === 'up') ? '后端服务：已连接 ✓' : '后端服务：已连接 ✓（远程隧道未连通）'
+      healthEl.style.color = '#2f9e44'
+    })
+    .catch(() => {
+      healthEl.textContent = '后端服务：连接失败 ✗ 请确认已启动 node admin/admin-server.js'
+      healthEl.style.color = '#c65a52'
+    })
+}
+checkHealth()
 
 async function load() {
   state.page = 1
@@ -205,6 +255,11 @@ async function loadMore() {
 
 document.getElementById('login-form').addEventListener('submit', async event => {
   event.preventDefault()
+  const err = document.getElementById('login-error')
+  err.classList.add('hidden')
+  loginBtn.disabled = true
+  const original = loginBtn.textContent
+  loginBtn.textContent = '登录中…'
   try {
     await api('login', 'POST', {
       username: document.getElementById('username').value,
@@ -214,8 +269,11 @@ document.getElementById('login-form').addEventListener('submit', async event => 
     mainEl.classList.remove('hidden')
     await load()
   } catch (error) {
-    document.getElementById('login-error').classList.remove('hidden')
-    document.getElementById('login-error').textContent = error.message
+    err.classList.remove('hidden')
+    err.textContent = error.message
+  } finally {
+    loginBtn.disabled = false
+    loginBtn.textContent = original
   }
 })
 

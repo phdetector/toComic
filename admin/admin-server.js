@@ -4,9 +4,23 @@ const os = require('os')
 const path = require('path')
 const { spawn } = require('child_process')
 
-const PORT = 37796
+const PORT = Number(process.env.EXPO_ADMIN_PORT || 37796)
 const TUNNEL_PORT = Number(process.env.EXPO_ADMIN_TUNNEL_PORT || 37795)
 const REMOTE = `http://127.0.0.1:${TUNNEL_PORT}`
+const UI_VERSION = 2
+const FETCH_TIMEOUT_MS = 15000
+
+async function remoteFetch(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (error) {
+    throw new Error('无法连接服务器(SSH隧道或远端服务不可达)')
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 let token = null
 let cache = []
@@ -78,7 +92,7 @@ function adoptRenewedToken(response) {
 }
 
 async function refresh() {
-  const response = await fetch(`${REMOTE}/admin/suggestions`, {
+  const response = await remoteFetch(`${REMOTE}/admin/suggestions`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (response.status === 401) {
@@ -93,7 +107,7 @@ async function refresh() {
 }
 
 async function remotePost(route, body) {
-  const response = await fetch(`${REMOTE}${route}`, {
+  const response = await remoteFetch(`${REMOTE}${route}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -122,26 +136,44 @@ function errorResponse(res, error) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`)
   const pathname = url.pathname
+  console.log(`[admin] ${new Date().toISOString()} ${req.method} ${pathname}`)
 
   if (req.method === 'POST' && pathname === '/api/login') {
     try {
       const body = await readBody(req, res)
-      const response = await fetch(`${REMOTE}/admin/login`, {
+      const response = await remoteFetch(`${REMOTE}/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: body.username, password: body.password }),
       })
       const payload = await response.json()
       if (!response.ok || !payload.ok) {
-        json(res, 401, { ok: false, error: payload.error || 'invalid credentials' })
+        json(res, 401, { ok: false, error: '用户名或密码错误' })
         return
       }
       token = payload.token
       await refresh()
       json(res, 200, { ok: true })
     } catch (error) {
-      json(res, 401, { ok: false, error: String(error) })
+      if (error instanceof UnauthorizedError) {
+        json(res, 401, { ok: false, error: '登录状态已失效，请重新登录' })
+      } else if (String(error).includes('无法连接')) {
+        json(res, 502, { ok: false, error: error.message })
+      } else {
+        json(res, 401, { ok: false, error: String(error) })
+      }
     }
+    return
+  }
+
+  if (req.method === 'GET' && pathname === '/api/ping') {
+    let remote = 'up'
+    try {
+      await remoteFetch(`${REMOTE}/admin/suggestions`, { headers: {} }, 4000)
+    } catch (_e) {
+      remote = 'down'
+    }
+    json(res, 200, { ok: true, version: UI_VERSION, remote, ts: Date.now() })
     return
   }
 
@@ -159,7 +191,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.headers['x-expo-admin'] !== '1') {
-    json(res, 403, { ok: false, error: 'forbidden' })
+    json(res, 403, { ok: false, error: 'forbidden', hint: '页面版本过旧，请强制刷新(Ctrl+Shift+R)或重开标签页' })
     return
   }
 
@@ -172,7 +204,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const page = Number(url.searchParams.get('page')) || 1
       const limit = Number(url.searchParams.get('limit')) || 50
-      const response = await fetch(`${REMOTE}/admin/suggestions?page=${page}&limit=${limit}`, {
+      const response = await remoteFetch(`${REMOTE}/admin/suggestions?page=${page}&limit=${limit}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (response.status === 401) {
@@ -217,6 +249,6 @@ process.on('exit', cleanup)
 
 startTunnel()
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`expo admin UI listening on http://127.0.0.1:${PORT}`)
+  console.log(`expo admin UI listening on http://127.0.0.1:${PORT} (v${UI_VERSION})`)
   console.log(`ssh tunnel to 101.37.21.166:${TUNNEL_PORT}`)
 })
