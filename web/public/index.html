@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>行程安排</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- 图标精灵：由 app/src/main/res/drawable/*.xml 的 VectorDrawable 逐一转写，统一用 currentColor 由 CSS 控色。
+     内联在此处而非外部文件，确保 <use href="#id"> 一定解析得到。 -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-back" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z"/>
+  </symbol>
+  <symbol id="i-add" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12,5v14M5,12h14"/>
+  </symbol>
+  <symbol id="i-close" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M18,6L6,18M6,6l12,12"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M11,19a8,8 0 1 0,0 -16a8,8 0 0 0,0 16zM21,21l-4.35,-4.35"/>
+  </symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12,20h9M16.5,3.5a2.12,2.12 0 0 1,3 3L7,19l-4,1l1,-4z"/>
+  </symbol>
+  <symbol id="i-save" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M19,21H5a2,2 0 0 1,-2 -2V5a2,2 0 0 1,2 -2h11l5,5v11a2,2 0 0 1,-2 2zM17,21v-8H7v8M7,3v5h8"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5,13l4,4L19,7"/>
+  </symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20.8,4.6a5.5,5.5 0 0 0,-7.8,0L12,5.6l-1,-1a5.5,5.5 0 0 0,-7.8,7.8l1,1L12,21l7.8,-7.6l1,-1a5.5,5.5 0 0 0,0 -7.8z"/>
+  </symbol>
+  <symbol id="i-heart-filled" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M20.8,4.6a5.5,5.5 0 0 0,-7.8,0L12,5.6l-1,-1a5.5,5.5 0 0 0,-7.8,7.8l1,1L12,21l7.8,-7.6l1,-1a5.5,5.5 0 0 0,0 -7.8z"/>
+  </symbol>
+  <symbol id="i-sort-default" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4,6h16M4,12h16M4,18h16"/>
+  </symbol>
+  <symbol id="i-sort-done" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5,13l4,4L19,7"/>
+  </symbol>
+  <symbol id="i-sort-time" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12,12m-9,0a9,9 0,1 0,18 0a9,9 0,1 0,-18 0M12,7v5l3,3"/>
+  </symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M9.29,6.71a1,1 0 0,0 0,1.41L13.17,12l-3.88,3.88a1,1 0,1,0 1.41,1.41l4.59,-4.59a1,1 0,0,0 0,-1.41L10.7,6.71a1,1 0 0,0 -1.41,0z"/>
+  </symbol>
+</svg>
+
+<div class="login-view" id="login-view">
+  <form class="login-box" id="login-form">
+    <h1>行程安排</h1>
+    <div class="hint" id="health">正在检测后端服务…</div>
+    <label class="field">
+      <span>用户名</span>
+      <input class="input" id="login-username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false">
+    </label>
+    <label class="field">
+      <span>密码</span>
+      <input class="input" id="login-password" name="password" type="password" autocomplete="current-password">
+    </label>
+    <div class="login-error" id="login-error"></div>
+    <div class="bottombar">
+      <button class="bar-btn primary" id="login-submit" type="submit">登录</button>
+    </div>
+  </form>
+</div>
+
+<div class="shell hidden" id="app">
+
+  <section class="view hidden" id="view-home">
+    <div class="topbar">
+      <div class="title">行程</div>
+    </div>
+    <div class="list" id="day-list"></div>
+    <div class="bottombar">
+      <button class="bar-btn primary" id="home-add">
+        <svg><use href="#i-add"></use></svg><span>新增日期</span>
+      </button>
+      <button class="bar-btn ghost" id="home-logout">退出</button>
+    </div>
+  </section>
+
+  <section class="view hidden" id="view-detail">
+    <div class="topbar">
+      <button class="icon-btn" id="detail-back" aria-label="返回"><svg><use href="#i-back"></use></svg></button>
+      <button class="pill accent grow1" id="detail-day-pill"></button>
+      <button class="icon-btn" id="detail-add" aria-label="新建日程"><svg><use href="#i-add"></use></svg></button>
+      <button class="icon-btn" id="detail-search" aria-label="搜索"><svg><use href="#i-search"></use></svg></button>
+      <button class="icon-btn" id="detail-sort" aria-label="排序"></button>
+    </div>
+    <div class="row hidden" id="detail-searchbar">
+      <input class="search-field" id="detail-query" placeholder="搜索地点, 时间, 详情" autocomplete="off">
+      <button class="icon-btn" id="detail-search-close" aria-label="关闭搜索"><svg><use href="#i-close"></use></svg></button>
+    </div>
+    <div class="list" id="activity-list"></div>
+    <div class="tabs">
+      <button class="tab" id="tab-overview">总览</button>
+      <button class="tab" id="tab-plan">计划</button>
+    </div>
+  </section>
+
+</div>
+
+<div id="overlays"></div>
+<div class="toast-host" id="toasts"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

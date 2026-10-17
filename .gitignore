@@ -33,6 +33,9 @@ Thumbs.db
 /keystore/release.keystore
 /keystore.properties
 
+# Web version runtime data (SQLite + generated account credentials, never commit)
+/web/data/
+
 # Stray zero-byte artifacts from the font download step
 /serif
 /preview/serif
