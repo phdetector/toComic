@@ -4,6 +4,7 @@ import com.tocomic.app.model.Booth
 import com.tocomic.app.model.BoothState
 import com.tocomic.app.model.CustomBooth
 import com.tocomic.app.model.HallMeta
+import com.tocomic.app.model.ProjectSpec
 import com.tocomic.app.model.TripSnapshot
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,7 +16,7 @@ import org.json.JSONObject
  * 「导出是否保住收藏」「导入是否会把已有收藏清零」这类语义。
  */
 object SnapshotCodec {
-    const val VERSION = 5
+    const val VERSION = 6
     const val MAX_IMPORT_ITEMS = 10_000
     const val MAX_JSON_DEPTH = 64
     const val MAX_HALL_TITLE = 40
@@ -119,7 +120,47 @@ object SnapshotCodec {
             put("customBooths", customBooths)
             put("booths", booths)
             put("halls", halls)
+            // v6 起携带项目信息，供「在主页导入完整项目」还原项目名
+            snapshot.project?.let { project ->
+                put("project", JSONObject().apply {
+                    put("id", project.id)
+                    put("title", normalizePunctuation(project.title).trim().take(100))
+                    put("subtitle", normalizePunctuation(project.subtitle).trim().take(100))
+                    put("year", normalizePunctuation(project.year).trim().take(40))
+                    put("note", normalizePunctuation(project.note).take(500))
+                })
+            }
         }
+    }
+
+    /**
+     * 把一份完整快照转成「自定义项目」形态：内置项目的 `booths` 数组转成 customBooths。
+     * 主页导入完整项目时，新项目没有内置展台，必须转换否则展台全部不可见。
+     */
+    fun asCustomProject(snapshot: TripSnapshot): TripSnapshot {
+        val existing = snapshot.customBooths.map { it.id }.toSet()
+        val converted = snapshot.booths
+            .filter { it.id !in existing }
+            .map { booth ->
+                val state = snapshot.states[booth.id] ?: BoothState()
+                CustomBooth(
+                    id = booth.id,
+                    hallId = booth.hallId,
+                    boothCode = booth.boothCode,
+                    name = booth.name,
+                    note = state.note,
+                    planned = state.planned,
+                    planOrder = state.planOrder,
+                    startTime = state.startTime,
+                    endTime = state.endTime,
+                    completed = state.completed
+                )
+            }
+        return snapshot.copy(
+            customBooths = snapshot.customBooths + converted,
+            booths = emptyList(),
+            project = null
+        )
     }
 
     /** 导出时按选择过滤：不保留收藏则清空 planned；两种模式都强制把完成状态重置为未完成。 */
@@ -136,7 +177,7 @@ object SnapshotCodec {
                 completed = false
             )
         }
-        return TripSnapshot(exportedStates, exportedCustomBooths, snapshot.booths, snapshot.hallMeta)
+        return TripSnapshot(exportedStates, exportedCustomBooths, snapshot.booths, snapshot.hallMeta, snapshot.project)
     }
 
     // ---------- 解码 ----------
@@ -158,8 +199,23 @@ object SnapshotCodec {
                 states = parseStates(statesArray),
                 customBooths = parseCustomBooths(customBoothsArray),
                 booths = parseBooths(boothsArray),
-                hallMeta = parseHalls(hallsArray)
+                hallMeta = parseHalls(hallsArray),
+                project = parseProject(root.optJSONObject("project"))
             )
+        )
+    }
+
+    // v6 才有 project；更老的文件没有这个键，返回 null（主页导入时回落默认名称）
+    private fun parseProject(item: JSONObject?): ProjectSpec? {
+        if (item == null) return null
+        val title = normalizePunctuation(item.optString("title", "")).trim().take(100)
+        if (title.isBlank()) return null
+        return ProjectSpec(
+            id = normalizePunctuation(item.optString("id", "")).trim().take(100),
+            title = title,
+            subtitle = normalizePunctuation(item.optString("subtitle", "")).trim().take(100),
+            year = normalizePunctuation(item.optString("year", "")).trim().take(40),
+            note = normalizePunctuation(item.optString("note", "")).take(500)
         )
     }
 
@@ -316,7 +372,7 @@ object SnapshotCodec {
             }
             .filterValues { it.title.isNotBlank() || it.subtitle.isNotBlank() }
 
-        return TripSnapshot(normalizedStates, normalizedCustomBooths, snapshot.booths, normalizedHallMeta)
+        return TripSnapshot(normalizedStates, normalizedCustomBooths, snapshot.booths, normalizedHallMeta, snapshot.project)
     }
 
     private fun normalizeStateKeys(states: Map<String, BoothState>): Map<String, BoothState> {

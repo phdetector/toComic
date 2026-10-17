@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.tocomic.app.data.AppMessagesApi
 import com.tocomic.app.data.AppPrefs
+import com.tocomic.app.data.CppImport
 import com.tocomic.app.data.SnapshotCodec
 import com.tocomic.app.data.TripStore
 import com.tocomic.app.data.ProjectData
@@ -132,6 +133,7 @@ import com.tocomic.app.model.CustomBooth
 import com.tocomic.app.model.TripProject
 import com.tocomic.app.model.Hall
 import com.tocomic.app.model.HallMeta
+import com.tocomic.app.model.ProjectSpec
 import com.tocomic.app.model.TripSnapshot
 import com.tocomic.app.model.TripTab
 import com.tocomic.app.model.ProjectOverrides
@@ -207,6 +209,43 @@ private fun AppRoot(incomingShare: MutableState<Uri?>) {
     var updateInfo by remember { mutableStateOf<AppUpdate?>(null) }
     var updating by remember { mutableStateOf(false) }
     var showDeclaration by remember { mutableStateOf(!appPrefs.declarationAccepted) }
+
+    // 主页导入完整项目：文件里带项目名就用它新建一个项目；项目 id 与已有项目冲突时不复用。
+    // 必须注册在下面的声明弹窗提前 return 之前，否则 Composable 调用顺序会变。
+    val projectImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            val loaded = runCatching { TripStore(context, "__project_import__").importFrom(uri) }
+            val snapshot = loaded.getOrNull()
+            if (snapshot == null) {
+                Toast.makeText(context, "导入失败: 无法解析文件", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val spec = snapshot.project
+            val title = spec?.title?.takeIf { it.isNotBlank() } ?: "导入的项目"
+            val takenIds = ProjectData.projects.map { it.id }.toSet() + customProjects.map { it.id }.toSet()
+            val newId = spec?.id?.takeIf { it.isNotBlank() && it !in takenIds }
+                ?: "custom-${System.currentTimeMillis()}"
+            customProjects.add(
+                TripProject(
+                    id = newId,
+                    title = title,
+                    subtitle = spec?.subtitle.orEmpty(),
+                    year = spec?.year.orEmpty(),
+                    note = spec?.note.orEmpty(),
+                    halls = emptyList(),
+                    booths = emptyList()
+                )
+            )
+            projectStore.saveProjects(
+                customProjects.toList(),
+                deletedBuiltInIds.toSet(),
+                builtInOverrides.toMap()
+            )
+            // 内置展台转成自定义展台，否则新项目里看不到任何展台
+            TripStore(context, newId).saveSnapshotCommitted(SnapshotCodec.asCustomProject(snapshot))
+            Toast.makeText(context, "已导入项目「$title」", Toast.LENGTH_LONG).show()
+        }
+    }
 
     if (showDeclaration) {
         DeclarationDialog(
@@ -300,6 +339,7 @@ private fun AppRoot(incomingShare: MutableState<Uri?>) {
             onOpen = { selectedProjectId = it },
             onLongPress = { projectMenuId = it },
             onAddProject = { showAddProject = true },
+            onImportProject = { projectImportLauncher.launch(arrayOf("*/*")) },
             onSettings = { showSettings = true }
         )
     } else {
@@ -459,6 +499,7 @@ private fun ProjectHome(
     onOpen: (String) -> Unit,
     onLongPress: (String) -> Unit,
     onAddProject: () -> Unit,
+    onImportProject: () -> Unit,
     onSettings: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -481,6 +522,9 @@ private fun ProjectHome(
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onImportProject, modifier = Modifier.pressScale()) {
+                        Icon(painterResource(R.drawable.ic_import), contentDescription = "导入完整项目")
+                    }
                     IconButton(onClick = onAddProject, modifier = Modifier.pressScale()) {
                         Icon(painterResource(R.drawable.ic_add), contentDescription = "添加项目")
                     }
@@ -1425,12 +1469,26 @@ private fun TripAppScreen(
     var showHallPicker by remember(project.id) { mutableStateOf(false) }
     var editingHall by remember(project.id) { mutableStateOf<Hall?>(null) }
     var showFileMenu by remember(project.id) { mutableStateOf(false) }
+    var showCppImport by remember(project.id) { mutableStateOf(false) }
     var showAddBooth by remember(project.id) { mutableStateOf(false) }
     var pendingAddBooth by remember(project.id) { mutableStateOf<CustomBooth?>(null) }
     var sortMode by remember(project.id) { mutableStateOf(SortMode.Default) }
 
     fun currentSnapshot(): TripSnapshot =
-        TripSnapshot(states.toMap(), customBooths.toList(), project.booths, hallMeta.toMap())
+        TripSnapshot(
+            states = states.toMap(),
+            customBooths = customBooths.toList(),
+            booths = project.booths,
+            hallMeta = hallMeta.toMap(),
+            // 导出时带上项目信息，主页导入完整项目时用它还原项目名
+            project = ProjectSpec(
+                id = project.id,
+                title = project.title,
+                subtitle = project.subtitle,
+                year = project.year,
+                note = project.note
+            )
+        )
 
     fun saveSnapshot() {
         store.saveSnapshot(currentSnapshot())
@@ -1574,6 +1632,31 @@ private fun TripAppScreen(
                 imported.hallMeta.forEach { (hallId, meta) -> hallMeta[hallId] = meta }
             }
         }
+        // 兜底：导入后如果某条状态没有对应展台（文件里 booths 缺该条目），它在计划/总览里都会消失。
+        // 这里补一个自定义展台，保证「归属计划的展台在总览里也能出现」。
+        imported.states.keys
+            .filter { id -> id !in officialBoothIds && customBooths.none { it.id == id } }
+            .forEach { id ->
+                val state = states[id] ?: return@forEach
+                val booth = imported.booths.firstOrNull { it.id == id }
+                customBooths.add(
+                    CustomBooth(
+                        id = id,
+                        hallId = booth?.hallId ?: CppImport.DEFAULT_HALL_ID,
+                        boothCode = booth?.boothCode ?: id,
+                        name = booth?.name ?: id,
+                        note = state.note,
+                        planned = state.planned,
+                        planOrder = state.planOrder,
+                        startTime = state.startTime,
+                        endTime = state.endTime,
+                        completed = state.completed
+                    )
+                )
+                if (booth == null && hallMeta[CppImport.DEFAULT_HALL_ID] == null) {
+                    hallMeta[CppImport.DEFAULT_HALL_ID] = HallMeta("", CppImport.DEFAULT_HALL_SUBTITLE)
+                }
+            }
         saveSnapshotCommitted()
         currentHall = null
     }
@@ -1649,6 +1732,41 @@ private fun TripAppScreen(
                 rememberImportChoice = false
                 showImportConflict = true
             }
+        }
+    }
+
+    // 从 CPP 链接导入展品：标题做成展台名，摊位号前缀做成展馆；无摊位号进默认展馆。
+    // 每个展品只取一条参与记录，所以它永远只归属一个展馆。
+    fun importFromCppLinks(links: List<String>) {
+        scope.launch {
+            var added = 0
+            var failed = 0
+            for (link in links) {
+                val exhibit = CppImport.fetchExhibit(link).getOrNull()
+                if (exhibit == null) {
+                    failed++
+                    continue
+                }
+                val raw = CppImport.toCustomBooth(exhibit)
+                val id = store.customBoothId(raw.hallId, raw.boothCode, raw.name)
+                if (customBooths.any { it.id == id } || states.containsKey(id)) {
+                    continue // 已经导入过
+                }
+                val booth = raw.copy(id = id)
+                customBooths.add(booth)
+                states[id] = booth.asState()
+                if (booth.hallId == CppImport.DEFAULT_HALL_ID) {
+                    hallMeta[CppImport.DEFAULT_HALL_ID] = HallMeta("", CppImport.DEFAULT_HALL_SUBTITLE)
+                }
+                added++
+            }
+            saveSnapshotCommitted()
+            currentHall = null
+            showCppImport = false
+            snackbar.showSnackbar(
+                if (failed == 0) "已导入 $added 个展台"
+                else "已导入 $added 个展台, $failed 个链接失败"
+            )
         }
     }
 
@@ -1840,7 +1958,17 @@ private fun TripAppScreen(
                 importKeepFavorites = keepFavorites
                 showFileMenu = false
                 importLauncher.launch(arrayOf("*/*"))
+            },
+            onCppImport = {
+                showFileMenu = false
+                showCppImport = true
             }
+        )
+    }
+    if (showCppImport) {
+        CppImportDialog(
+            onDismiss = { showCppImport = false },
+            onImport = { links -> importFromCppLinks(links) }
         )
     }
     if (showImportConflict) {
@@ -3053,7 +3181,8 @@ private fun FileMenu(
     onDismiss: () -> Unit,
     onSaveExport: (Boolean) -> Unit,
     onShareExport: (Boolean) -> Unit,
-    onImport: (Boolean) -> Unit
+    onImport: (Boolean) -> Unit,
+    onCppImport: () -> Unit
 ) {
     var mode by remember { mutableStateOf(FileMode.Export) }
     var keepFavorites by remember { mutableStateOf(true) }
@@ -3144,7 +3273,94 @@ private fun FileMenu(
                     }
                 }
             }
+            // 分享页最下面：从 CPP 链接导入展品（按摊位号前缀归入展馆）
+            FileMenuSegment(
+                label = "从 CPP 链接导入",
+                icon = R.drawable.ic_import,
+                selected = false,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onCppImport
+            )
+            Text(
+                text = "粘贴 icp.red 短链或 allcpp.cn/d/… 链接，按摊位号前缀归入展馆；无摊位号则进默认展馆",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CppImportDialog(
+    onDismiss: () -> Unit,
+    onImport: (List<String>) -> Unit
+) {
+    var text by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val links = remember(text) {
+        text.split('\n', ' ', '\t', '\r')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
+    Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "从 CPP 链接导入",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "每行一个链接，支持 icp.red 短链或 www.allcpp.cn/d/… ；标题取自展品，摊位号前缀作为展馆",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { if (!busy) text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !busy,
+                    maxLines = 6,
+                    shape = RoundedCornerShape(18.dp),
+                    label = { Text("CPP 链接") },
+                    placeholder = { Text("https://icp.red/qkSBTvItA") }
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss, enabled = !busy, modifier = Modifier.pressScale()) {
+                        Text("取消")
+                    }
+                    TextButton(
+                        onClick = {
+                            busy = true
+                            onImport(links)
+                        },
+                        enabled = !busy && links.isNotEmpty(),
+                        modifier = Modifier.pressScale()
+                    ) {
+                        Text(if (busy) "导入中…" else "导入", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
         }
     }
 }

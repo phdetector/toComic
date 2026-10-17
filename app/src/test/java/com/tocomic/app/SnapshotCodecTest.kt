@@ -1,14 +1,17 @@
 package com.tocomic.app
 
 import com.tocomic.app.data.SnapshotCodec
+import com.tocomic.app.model.Booth
 import com.tocomic.app.model.BoothState
 import com.tocomic.app.model.CustomBooth
 import com.tocomic.app.model.HallMeta
+import com.tocomic.app.model.ProjectSpec
 import com.tocomic.app.model.TripSnapshot
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -97,7 +100,8 @@ class SnapshotCodecTest {
         )
 
         val encoded = SnapshotCodec.encode(SnapshotCodec.exportFilter(snapshot, keepFavorites = true))
-        assertEquals(5, encoded.getInt("version"))
+        // 断言引用常量而不是写死数字，导出格式升级时不用改测试
+        assertEquals(SnapshotCodec.VERSION.toLong(), encoded.getInt("version").toLong())
 
         val decoded = SnapshotCodec.decode(encoded.toString())
         assertTrue(decoded.states.getValue("A").planned)
@@ -124,5 +128,59 @@ class SnapshotCodecTest {
         val decoded = SnapshotCodec.decode(v5)
         assertEquals(HallMeta("主舞台", ""), decoded.hallMeta["E3"])
         assertFalse("名称与备注都空的不应保留", decoded.hallMeta.containsKey("N1"))
+    }
+
+    // v6 起导出文件带项目信息，主页导入时用它还原项目名
+    @Test
+    fun projectSpecRoundTripsThroughEncodeDecode() {
+        val snapshot = TripSnapshot(
+            project = ProjectSpec(id = "custom-1", title = "CP32 上海", subtitle = "国家会展中心", year = "2026", note = "备注")
+        )
+        val encoded = SnapshotCodec.encode(SnapshotCodec.exportFilter(snapshot, keepFavorites = true))
+        assertEquals(SnapshotCodec.VERSION.toLong(), encoded.getInt("version").toLong())
+
+        val decoded = SnapshotCodec.decode(encoded.toString())
+        assertEquals("CP32 上海", decoded.project?.title)
+        assertEquals("custom-1", decoded.project?.id)
+        assertEquals("2026", decoded.project?.year)
+    }
+
+    // 老文件没有 project 键时不能造出一个空项目名
+    @Test
+    fun missingProjectSpecStaysNull() {
+        val v5 = """{"version":5,"items":[],"customBooths":[],"booths":[],"halls":[]}"""
+        assertNull(SnapshotCodec.decode(v5).project)
+    }
+
+    // 主页导入完整项目：内置展台必须转成自定义展台，否则新项目里一个新展台都看不到
+    @Test
+    fun asCustomProjectConvertsBuiltInBooths() {
+        val snapshot = TripSnapshot(
+            states = mapOf("NZ-12-6" to state(planned = true, note = "备注")),
+            booths = listOf(Booth("NZ-12-6", "NZ", "12-6", "Wayway")),
+            project = ProjectSpec(id = "chinajoy-2026", title = "ChinaJoy 2026")
+        )
+
+        val converted = SnapshotCodec.asCustomProject(snapshot)
+        assertEquals(1, converted.customBooths.size)
+        assertEquals("Wayway", converted.customBooths.first().name)
+        assertEquals("NZ", converted.customBooths.first().hallId)
+        assertTrue("收藏要跟着转过去", converted.customBooths.first().planned)
+        assertTrue(converted.booths.isEmpty())
+        assertNull("转成自定义项目后不再带内置项目信息", converted.project)
+    }
+
+    // 转换后再归一化、再编解码，展台不能丢
+    @Test
+    fun asCustomProjectSurvivesRoundTrip() {
+        val snapshot = TripSnapshot(
+            states = mapOf("NZ-12-6" to state(planned = true)),
+            booths = listOf(Booth("NZ-12-6", "NZ", "12-6", "Wayway"))
+        )
+        val roundTripped = SnapshotCodec.decode(
+            SnapshotCodec.encode(SnapshotCodec.asCustomProject(snapshot)).toString()
+        )
+        assertEquals(1, roundTripped.customBooths.size)
+        assertTrue(roundTripped.states.getValue("NZ-12-6").planned)
     }
 }

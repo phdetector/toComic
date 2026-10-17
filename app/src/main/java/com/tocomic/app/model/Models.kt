@@ -55,11 +55,21 @@ data class CustomBooth(
     )
 }
 
+// 导出文件里携带的项目信息，用于「在主页导入完整项目」时还原名称。
+data class ProjectSpec(
+    val id: String = "",
+    val title: String = "",
+    val subtitle: String = "",
+    val year: String = "",
+    val note: String = ""
+)
+
 data class TripSnapshot(
     val states: Map<String, BoothState> = emptyMap(),
     val customBooths: List<CustomBooth> = emptyList(),
     val booths: List<Booth> = emptyList(),
-    val hallMeta: Map<String, HallMeta> = emptyMap()
+    val hallMeta: Map<String, HallMeta> = emptyMap(),
+    val project: ProjectSpec? = null
 )
 
 data class BoothUi(
