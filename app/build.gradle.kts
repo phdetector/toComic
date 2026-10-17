@@ -69,4 +69,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     debugImplementation("androidx.compose.ui:ui-tooling:1.6.8")
+
+    // 纯 JVM 单测：SnapshotCodec 不依赖 Android，可直接验证导出/导入与收藏合并语义
+    testImplementation("junit:junit:4.13.2")
+    // 单测里 android.jar 的 org.json 是空壳，需要真实实现
+    testImplementation("org.json:json:20240303")
 }

@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.tocomic.app.data.AppMessagesApi
 import com.tocomic.app.data.AppPrefs
+import com.tocomic.app.data.SnapshotCodec
 import com.tocomic.app.data.TripStore
 import com.tocomic.app.data.ProjectData
 import com.tocomic.app.data.ProjectStore
@@ -130,6 +131,7 @@ import com.tocomic.app.model.BoothUi
 import com.tocomic.app.model.CustomBooth
 import com.tocomic.app.model.TripProject
 import com.tocomic.app.model.Hall
+import com.tocomic.app.model.HallMeta
 import com.tocomic.app.model.TripSnapshot
 import com.tocomic.app.model.TripTab
 import com.tocomic.app.model.ProjectOverrides
@@ -1413,19 +1415,22 @@ private fun TripAppScreen(
     val snackbar = remember { SnackbarHostState() }
     val states = remember(project.id) { mutableStateMapOf<String, BoothState>() }
     val customBooths = remember(project.id) { mutableStateListOf<CustomBooth>() }
+    // 用户自定义的展馆显示名称/备注，按 hallId 持久化在本项目的快照里
+    val hallMeta = remember(project.id) { mutableStateMapOf<String, HallMeta>() }
     val officialBoothIds = remember(project.id) { project.booths.map { it.id }.toSet() }
     var currentHall by remember(project.id) { mutableStateOf(project.halls.firstOrNull()) }
     var currentTab by remember(project.id) { mutableStateOf(TripTab.Overview) }
     var query by remember(project.id) { mutableStateOf("") }
     var searching by remember(project.id) { mutableStateOf(false) }
     var showHallPicker by remember(project.id) { mutableStateOf(false) }
+    var editingHall by remember(project.id) { mutableStateOf<Hall?>(null) }
     var showFileMenu by remember(project.id) { mutableStateOf(false) }
     var showAddBooth by remember(project.id) { mutableStateOf(false) }
     var pendingAddBooth by remember(project.id) { mutableStateOf<CustomBooth?>(null) }
     var sortMode by remember(project.id) { mutableStateOf(SortMode.Default) }
 
     fun currentSnapshot(): TripSnapshot =
-        TripSnapshot(states.toMap(), customBooths.toList(), project.booths)
+        TripSnapshot(states.toMap(), customBooths.toList(), project.booths, hallMeta.toMap())
 
     fun saveSnapshot() {
         store.saveSnapshot(currentSnapshot())
@@ -1466,7 +1471,7 @@ private fun TripAppScreen(
         upsertCustomBooth(custom)
         states[custom.id] = custom.asState()
         if (currentHall == null) {
-            currentHall = Hall(custom.hallId, "", "自定义展馆", 0xFF8D867A)
+            currentHall = syntheticHall(custom.hallId, hallMeta)
         }
         saveSnapshotCommitted()
         showAddBooth = false
@@ -1481,9 +1486,13 @@ private fun TripAppScreen(
         val snapshot = store.loadSnapshot()
         states.putAll(snapshot.states)
         customBooths.addAll(snapshot.customBooths)
+        hallMeta.putAll(snapshot.hallMeta)
     }
 
     var importKeepFavorites by remember(project.id) { mutableStateOf(true) }
+    // 「保存到下载目录」在 API≤28 需要先申请权限，回调里必须用本次导出时的选择，
+    // 不能复用 importKeepFavorites（那是上一次导入的选择，会串味）
+    var exportKeepFavorites by remember(project.id) { mutableStateOf(true) }
     var pendingImport by remember(project.id) { mutableStateOf<TripSnapshot?>(null) }
     var showImportConflict by remember(project.id) { mutableStateOf(false) }
     var rememberImportChoice by remember(project.id) { mutableStateOf(false) }
@@ -1517,12 +1526,10 @@ private fun TripAppScreen(
                 imported.states.forEach { (id, state) ->
                     if (id in validStateIds) {
                         val previous = states[id]
-                        if (previous == null) {
-                            states[id] = state
-                        } else {
-                            states[id] = previous.copy(planned = state.planned, planOrder = state.planOrder)
-                        }
-                        syncCustomBoothState(id, states[id] ?: state)
+                        // 合并语义：本地已有的收藏一定保留，导入里带收藏的再补上（绝不减少收藏）
+                        val merged = if (previous == null) state else SnapshotCodec.mergeKeepExisting(previous, state)
+                        states[id] = merged
+                        syncCustomBoothState(id, merged)
                     }
                 }
                 imported.customBooths.forEach { booth ->
@@ -1530,9 +1537,12 @@ private fun TripAppScreen(
                     if (index < 0) {
                         customBooths.add(booth)
                     } else {
-                        val current = customBooths[index]
-                        customBooths[index] = current.copy(planned = booth.planned, planOrder = booth.planOrder)
+                        customBooths[index] = SnapshotCodec.mergeKeepExisting(customBooths[index], booth)
                     }
+                }
+                // 展馆改名：保留本地已有的，只补本地没有的
+                imported.hallMeta.forEach { (hallId, meta) ->
+                    if (hallId !in hallMeta) hallMeta[hallId] = meta
                 }
             }
             ImportConflict.OverwriteWithNotes -> {
@@ -1546,6 +1556,7 @@ private fun TripAppScreen(
                 val merged = customBooths.filter { it.id !in importedIds } + imported.customBooths
                 customBooths.clear()
                 customBooths.addAll(merged)
+                imported.hallMeta.forEach { (hallId, meta) -> hallMeta[hallId] = meta }
             }
             ImportConflict.OverwriteWithoutNotes -> {
                 imported.states.forEach { (id, state) ->
@@ -1560,6 +1571,7 @@ private fun TripAppScreen(
                 val merged = customBooths.filter { it.id !in importedIds } + imported.customBooths
                 customBooths.clear()
                 customBooths.addAll(merged)
+                imported.hallMeta.forEach { (hallId, meta) -> hallMeta[hallId] = meta }
             }
         }
         saveSnapshotCommitted()
@@ -1568,7 +1580,7 @@ private fun TripAppScreen(
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) scope.launch {
-            val json = store.exportJson(currentSnapshot(), importKeepFavorites)
+            val json = store.exportJson(currentSnapshot(), exportKeepFavorites)
             val saved = saveExportToDownloads(context, project.id, json)
             snackbar.showSnackbar(if (saved) "已保存到下载目录" else "保存失败")
         }
@@ -1655,13 +1667,7 @@ private fun TripAppScreen(
     }
 
     val allHalls by remember(project.id) {
-        derivedStateOf {
-            val customHalls = customBooths
-                .map { it.hallId }
-                .distinct()
-                .map { hallId -> Hall(hallId, "", "自定义展馆", 0xFF8D867A) }
-            project.halls + customHalls
-        }
+        derivedStateOf { buildHalls(project.halls, customBooths, hallMeta) }
     }
     val items by remember(project.id, currentHall, currentTab, query, sortMode) {
         derivedStateOf {
@@ -1714,6 +1720,7 @@ private fun TripAppScreen(
                 .imePadding(),
             tab = currentTab,
             items = items,
+            hasAnyFavorite = states.values.any { it.planned } || customBooths.any { it.planned },
             onTogglePlan = { booth ->
                 updateState(booth.id) { state ->
                     if (state.planned) state.copy(planned = false, planOrder = Int.MAX_VALUE)
@@ -1764,16 +1771,47 @@ private fun TripAppScreen(
     }
 
     if (showHallPicker) {
-        HallPicker(halls = allHalls, current = currentHall, onDismiss = { showHallPicker = false }) { hall ->
-            currentHall = hall
-            showHallPicker = false
-        }
+        HallPicker(
+            halls = allHalls,
+            current = currentHall,
+            onDismiss = { showHallPicker = false },
+            onEditHall = { hall ->
+                showHallPicker = false
+                editingHall = hall
+            },
+            onPick = { hall ->
+                currentHall = hall
+                showHallPicker = false
+            }
+        )
+    }
+    editingHall?.let { hall ->
+        EditHallDialog(
+            hall = hall,
+            builtIn = project.halls.any { it.id == hall.id },
+            normalize = store::normalizePunctuation,
+            onDismiss = {
+                editingHall = null
+                showHallPicker = true
+            },
+            onSave = { title, subtitle ->
+                hallMeta[hall.id] = HallMeta(title, subtitle)
+                saveSnapshotCommitted()
+                if (currentHall?.id == hall.id) {
+                    currentHall = buildHalls(project.halls, customBooths.toList(), hallMeta.toMap())
+                        .firstOrNull { it.id == hall.id }
+                }
+                editingHall = null
+                showHallPicker = true
+            }
+        )
     }
     if (showFileMenu) {
         FileMenu(
             onDismiss = { showFileMenu = false },
             onSaveExport = { keepFavorites ->
                 importKeepFavorites = keepFavorites
+                exportKeepFavorites = keepFavorites
                 showFileMenu = false
                 val hasPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
                     context.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
@@ -1984,6 +2022,43 @@ private fun compareNumericToken(left: String, right: String): Int {
 private fun nextPlanOrder(states: Map<String, BoothState>): Int =
     (states.values.filter { it.planned && it.planOrder != Int.MAX_VALUE }.maxOfOrNull { it.planOrder } ?: -1) + 1
 
+private const val DEFAULT_HALL_SUBTITLE = "自定义展馆"
+
+// 内置展馆套用用户自定义的名称/备注；留空则保持内置文案。
+private fun mergedHall(hall: Hall, meta: Map<String, HallMeta>): Hall {
+    val override = meta[hall.id] ?: return hall
+    return hall.copy(
+        title = override.title.ifBlank { hall.title },
+        subtitle = override.subtitle.ifBlank { hall.subtitle }
+    )
+}
+
+// 只为「本次出现了自定义展台」的展馆号合成一个展馆，名称取用户自定义值。
+private fun syntheticHall(hallId: String, meta: Map<String, HallMeta>): Hall {
+    val override = meta[hallId]
+    return Hall(
+        id = hallId,
+        title = override?.title.orEmpty(),
+        subtitle = override?.subtitle?.ifBlank { DEFAULT_HALL_SUBTITLE } ?: DEFAULT_HALL_SUBTITLE,
+        accent = 0xFF8D867A
+    )
+}
+
+// 内置展馆 + 自定义展台涉及的展馆（已与内置去重，避免同名两行）。另外把用户改过名的展馆
+// 也保留下来，避免删光该展馆下的自定义展台后改名成果丢失。
+private fun buildHalls(
+    builtIn: List<Hall>,
+    customBooths: List<CustomBooth>,
+    meta: Map<String, HallMeta>
+): List<Hall> {
+    val builtInIds = builtIn.map { it.id }.toSet()
+    val extraIds = (customBooths.map { it.hallId } + meta.keys)
+        .distinct()
+        .filter { it.isNotBlank() && it !in builtInIds }
+        .sorted()
+    return builtIn.map { mergedHall(it, meta) } + extraIds.map { syntheticHall(it, meta) }
+}
+
 private fun hallLabel(hall: Hall): String =
     listOf(hall.id, hall.title).filter { it.isNotBlank() }.joinToString(" ")
 
@@ -2104,6 +2179,7 @@ private fun BoothList(
     modifier: Modifier,
     tab: TripTab,
     items: List<BoothUi>,
+    hasAnyFavorite: Boolean,
     onTogglePlan: (Booth) -> Unit,
     onToggleCompleted: (Booth) -> Unit,
     onSave: (Booth, String, String, String, String) -> Unit,
@@ -2112,7 +2188,12 @@ private fun BoothList(
     if (items.isEmpty()) {
         Box(modifier = modifier.padding(24.dp), contentAlignment = Alignment.Center) {
             Text(
-                text = if (tab == TripTab.Plan) "收藏展台后会出现在这里" else "没有匹配的展台",
+                // 区分「真的没有收藏」和「有收藏但被当前展馆过滤掉了」
+                text = when {
+                    tab == TripTab.Plan && hasAnyFavorite -> "当前展馆下没有收藏, 切到「全部展馆」查看"
+                    tab == TripTab.Plan -> "收藏展台后会出现在这里"
+                    else -> "没有匹配的展台"
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -2577,6 +2658,7 @@ private fun HallPicker(
     halls: List<Hall>,
     current: Hall?,
     onDismiss: () -> Unit,
+    onEditHall: (Hall) -> Unit,
     onPick: (Hall?) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -2621,22 +2703,120 @@ private fun HallPicker(
                 }
                 halls.forEach { hall ->
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(if (hall == current) Color(hall.accent).copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
-                            .pressScale()
-                            .clickable { onPick(hall) }
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(hallLabel(hall), fontWeight = FontWeight.SemiBold)
-                        Text(hall.subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(if (hall == current) Color(hall.accent).copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
+                                .pressScale()
+                                .clickable { onPick(hall) }
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = hallLabel(hall),
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Text(
+                                text = hall.subtitle,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier
+                                    .padding(start = 8.dp)
+                                    .weight(1f, fill = false)
+                            )
+                        }
+                        IconButton(onClick = { onEditHall(hall) }, modifier = Modifier.pressScale()) {
+                            Icon(painterResource(R.drawable.ic_edit), contentDescription = "编辑展馆名称")
+                        }
                     }
                 }
             }
             TextButton(onClick = onDismiss) { Text("完成") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditHallDialog(
+    hall: Hall,
+    builtIn: Boolean,
+    normalize: (String) -> String,
+    onDismiss: () -> Unit,
+    onSave: (title: String, subtitle: String) -> Unit
+) {
+    var title by remember(hall.id) { mutableStateOf(hall.title) }
+    var subtitle by remember(hall.id) { mutableStateOf(hall.subtitle) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "编辑展馆",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = hall.id,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = CodeFont),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = if (builtIn) "将覆盖内置展馆的文案, 留空则恢复默认" else "留空则显示「$DEFAULT_HALL_SUBTITLE」",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = normalize(sanitizeLength(it, 40)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                label = { Text("名称") },
+                placeholder = { Text(hall.id) }
+            )
+            OutlinedTextField(
+                value = subtitle,
+                onValueChange = { subtitle = normalize(sanitizeLength(it, 100)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                label = { Text("备注") },
+                placeholder = { Text(if (builtIn) hall.subtitle else DEFAULT_HALL_SUBTITLE) }
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(onClick = { onSave(title.trim(), subtitle.trim()) }) {
+                    Text("保存", fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
     }
 }

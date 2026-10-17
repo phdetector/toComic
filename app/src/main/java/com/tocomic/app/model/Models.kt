@@ -7,6 +7,13 @@ data class Hall(
     val accent: Long
 )
 
+// 用户对展馆显示名称/备注的自定义。title/subtitle 都允许为空，
+// 为空时回落到展馆号与默认副标题。
+data class HallMeta(
+    val title: String = "",
+    val subtitle: String = ""
+)
+
 data class Booth(
     val id: String,
     val hallId: String,
@@ -51,7 +58,8 @@ data class CustomBooth(
 data class TripSnapshot(
     val states: Map<String, BoothState> = emptyMap(),
     val customBooths: List<CustomBooth> = emptyList(),
-    val booths: List<Booth> = emptyList()
+    val booths: List<Booth> = emptyList(),
+    val hallMeta: Map<String, HallMeta> = emptyMap()
 )
 
 data class BoothUi(
