@@ -8,10 +8,10 @@
 node admin/admin-server.js
 ```
 
-浏览器打开 `http://127.0.0.1:37796`（默认端口，可用环境变量 `EXPO_ADMIN_PORT` 更换，例如 `$env:EXPO_ADMIN_PORT=37797`）。
+浏览器打开 `http://127.0.0.1:37796`（默认端口，可用环境变量 `TOCOMIC_ADMIN_PORT` 更换，例如 `$env:TOCOMIC_ADMIN_PORT=37797`）。
 
 - 服务端 admin API 仅监听 `127.0.0.1`，本程序启动时自动通过 SSH 建立本地隧道（默认使用 `~/.ssh/gptvoice_id_ed25519`）。
-- 可用环境变量覆盖：`EXPO_ADMIN_PORT`（本地页面端口，默认 37796）、`EXPO_ADMIN_SSH_KEY`、`EXPO_ADMIN_TUNNEL_PORT`；`EXPO_ADMIN_NO_TUNNEL=1` 可跳过隧道（服务端本机调试时使用）。
+- 可用环境变量覆盖：`TOCOMIC_ADMIN_PORT`（本地页面端口，默认 37796）、`TOCOMIC_ADMIN_SSH_KEY`、`TOCOMIC_ADMIN_TUNNEL_PORT`；`TOCOMIC_ADMIN_NO_TUNNEL=1` 可跳过隧道（服务端本机调试时使用）。
 
 首次使用需要服务器端生成的用户名与密码（见 `.admin-secret.json`，该文件不入库）。
 

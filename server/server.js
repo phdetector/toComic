@@ -4,7 +4,7 @@ const path = require('path')
 const { randomUUID, createHmac, scryptSync, timingSafeEqual, createHash, randomBytes } = require('node:crypto')
 const { DatabaseSync } = require('node:sqlite')
 
-const DATA_DIR = '/var/lib/expo-suggestions'
+const DATA_DIR = '/var/lib/tocomic-suggestions'
 const DATA_FILE = path.join(DATA_DIR, 'suggestions.jsonl')
 const DB_FILE = path.join(DATA_DIR, 'suggestions.db')
 const CLIENT_SECRETS_FILE = path.join(DATA_DIR, 'client-secrets.jsonl')
@@ -291,10 +291,18 @@ const ADMIN_LOGIN_LOCK_MS = 15 * 60 * 1000
 const adminTokens = new Map()
 const adminLoginFailures = new Map()
 
+// 环境变量改名过渡期：TOCOMIC_ADMIN_* 优先，读不到则回退旧名 EXPO_ADMIN_*，
+// 这样先发代码、后改 systemd unit 也不会让服务启动失败。
+function adminEnv(name, fallback) {
+  const legacy = name.replace(/^TOCOMIC_/, 'EXPO_')
+  const value = process.env[name] || process.env[legacy]
+  return value === undefined || value === '' ? fallback : value
+}
+
 function adminSecret() {
-  const secret = process.env.EXPO_ADMIN_SECRET
+  const secret = adminEnv('TOCOMIC_ADMIN_SECRET')
   if (!secret) {
-    console.error('EXPO_ADMIN_SECRET is required')
+    console.error('TOCOMIC_ADMIN_SECRET (或旧名 EXPO_ADMIN_SECRET) is required')
     process.exit(1)
   }
   return secret
@@ -325,7 +333,7 @@ function verifyAdmin(req, res) {
   }
   if (state.expiry - Date.now() < ADMIN_TOKEN_RENEW_MS) {
     adminTokens.delete(token)
-    res.setHeader('X-Expo-Token', issueAdminToken(state.username))
+    res.setHeader('X-ToComic-Token', issueAdminToken(state.username))
   }
   return true
 }
@@ -612,8 +620,8 @@ const adminServer = http.createServer((req, res) => {
   send(res, 404, { ok: false, error: 'not found' })
 })
 
-if (!process.env.EXPO_ADMIN_SECRET) {
-  console.error('EXPO_ADMIN_SECRET is required')
+if (!adminEnv('TOCOMIC_ADMIN_SECRET')) {
+  console.error('TOCOMIC_ADMIN_SECRET (或旧名 EXPO_ADMIN_SECRET) is required')
   process.exit(1)
 }
 

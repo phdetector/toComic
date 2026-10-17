@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ChinaJoyPlanner"
+rootProject.name = "toComicPreview"
 include(":app")

@@ -11,11 +11,11 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "com.cj2026.planner"
+    namespace = "com.tocomic.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.cj2026.expo"
+        applicationId = "com.tocomic.app"
         minSdk = 26
         targetSdk = 34
         versionCode = 21

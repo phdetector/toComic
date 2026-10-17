@@ -5,14 +5,14 @@
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
-        android:label="ChinaJoy Planner"
+        android:label="toComic Preview"
         android:roundIcon="@drawable/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.ChinaJoyPlanner">
+        android:theme="@style/Theme.ToComic">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.ChinaJoyPlanner">
+            android:theme="@style/Theme.ToComic">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

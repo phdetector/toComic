@@ -1,6 +1,6 @@
 const { DatabaseSync } = require('node:sqlite')
 
-const DB_FILE = '/var/lib/expo-suggestions/suggestions.db'
+const DB_FILE = '/var/lib/tocomic-suggestions/suggestions.db'
 const id = process.argv[2]
 const reply = process.argv[3]
 if (!id || !reply) {

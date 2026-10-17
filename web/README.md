@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File web\deploy.ps1 -Logs            # 查�
 | 数据 | `/var/lib/tocomic-web/`（`trip.db`、`accounts.txt`、`session-secret`），属主 `www:www` |
 | systemd | `/etc/systemd/system/tocomic-web.service`（`Restart=always`、开机自启） |
 
-`deploy.ps1` 只写以上两处目录、只操作 `tocomic-web` 这一个 unit，不碰 nginx 与 `expo-suggestions`。
+`deploy.ps1` 只写以上两处目录、只操作 `tocomic-web` 这一个 unit，不碰 nginx 与 `tocomic-suggestions`。
 
 常用运维命令（服务器上执行）：
 

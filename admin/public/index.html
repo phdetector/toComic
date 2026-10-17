@@ -183,7 +183,7 @@ async function api(route, method, body) {
   try {
     response = await fetchWithTimeout('/api/' + route, {
       method: method || 'GET',
-      headers: { 'Content-Type': 'application/json', 'X-Expo-Admin': '1' },
+      headers: { 'Content-Type': 'application/json', 'X-ToComic-Admin': '1' },
       body: body ? JSON.stringify(body) : undefined,
     })
   } catch (error) {

@@ -11,7 +11,7 @@
 #   1) 阿里云安全组放行 11451/TCP 入方向
 #   2) 服务器上已有 node >= 22.5（node:sqlite 需要）
 # 本脚本只写 /opt/tocomic-web 与 /var/lib/tocomic-web，并操练 tocomic-web 这一个 unit，
-# 不会碰 nginx / expo-suggestions。
+# 不会碰 nginx / tocomic-suggestions。
 
 param(
     [switch]$RunE2E,

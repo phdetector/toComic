@@ -4,8 +4,15 @@ const os = require('os')
 const path = require('path')
 const { spawn } = require('child_process')
 
-const PORT = Number(process.env.EXPO_ADMIN_PORT || 37796)
-const TUNNEL_PORT = Number(process.env.EXPO_ADMIN_TUNNEL_PORT || 37795)
+// 环境变量改名过渡期：TOCOMIC_ADMIN_* 优先，读不到则回退旧名 EXPO_ADMIN_*
+const envOr = (name, fallback) => {
+  const legacy = name.replace(/^TOCOMIC_/, 'EXPO_')
+  const value = process.env[name] || process.env[legacy]
+  return value === undefined || value === '' ? fallback : value
+}
+
+const PORT = Number(envOr('TOCOMIC_ADMIN_PORT', 37796))
+const TUNNEL_PORT = Number(envOr('TOCOMIC_ADMIN_TUNNEL_PORT', 37795))
 const REMOTE = `http://127.0.0.1:${TUNNEL_PORT}`
 const UI_VERSION = 2
 const FETCH_TIMEOUT_MS = 15000
@@ -32,8 +39,8 @@ class UnauthorizedError extends Error {
 }
 
 function startTunnel() {
-  if (process.env.EXPO_ADMIN_NO_TUNNEL === '1') return
-  const sshKey = process.env.EXPO_ADMIN_SSH_KEY
+  if (envOr('TOCOMIC_ADMIN_NO_TUNNEL') === '1') return
+  const sshKey = envOr('TOCOMIC_ADMIN_SSH_KEY')
     || path.join(process.env.USERPROFILE || '', '.ssh', 'gptvoice_id_ed25519')
   tunnelProcess = spawn('ssh', [
     '-N',
@@ -44,7 +51,7 @@ function startTunnel() {
       '-o', 'ServerAliveInterval=30',
       '-o', 'ServerAliveCountMax=4',
     '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', `UserKnownHostsFile=${path.join(os.tmpdir(), 'expo-admin-known-hosts')}`,
+    '-o', `UserKnownHostsFile=${path.join(os.tmpdir(), 'tocomic-admin-known-hosts')}`,
   ], { stdio: 'ignore' })
   tunnelProcess.on('exit', () => { tunnelProcess = null })
 }
@@ -89,7 +96,7 @@ function readBody(req, res) {
 }
 
 function adoptRenewedToken(response) {
-  const renewed = response.headers.get('x-expo-token')
+  const renewed = response.headers.get('x-tocomic-token')
   if (renewed) token = renewed
 }
 
@@ -192,7 +199,7 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (req.headers['x-expo-admin'] !== '1') {
+  if (req.headers['x-tocomic-admin'] !== '1') {
     json(res, 403, { ok: false, error: 'forbidden', hint: '页面版本过旧，请强制刷新(Ctrl+Shift+R)或重开标签页' })
     return
   }

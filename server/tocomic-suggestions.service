@@ -1,0 +1,17 @@
+[Unit]
+Description=toComic suggestions receiver
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/tocomic-suggestions/admin-secret.env
+ExecStart=/usr/bin/node /opt/tocomic-suggestions/server.js
+Restart=always
+RestartSec=3
+User=www
+Group=www
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

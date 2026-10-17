@@ -1,4 +1,4 @@
-# Deploy expo-suggestions server + run end-to-end verification.
+# Deploy tocomic-suggestions server + run end-to-end verification.
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File server\deploy.ps1 -AdminUsername <username> -AdminPassword <password> [-SkipDeploy] [-DeployNginx] [-PublishApk <apk-path>] [-RunLocalAdminTests] [-Cleanup]
 # One-time HTTPS setup (requires DNS A record 269278.xyz -> 101.37.21.166 already resolving):
@@ -25,7 +25,7 @@ if ($RunLocalAdminTests -and -not $AdminUsername) {
 $ServerHost   = '101.37.21.166'
 $ServerUser   = 'root'
 $SshKey       = Join-Path $env:USERPROFILE '.ssh\gptvoice_id_ed25519'
-$RemoteDir    = '/opt/expo-suggestions'
+$RemoteDir    = '/opt/tocomic-suggestions'
 $AdminUrl     = 'http://127.0.0.1:37796'
 $PublicUrl    = 'https://269278.xyz'
 
@@ -54,9 +54,9 @@ if (-not $SkipDeploy) {
         (Join-Path $PSScriptRoot 'server.js') "${ServerUser}@${ServerHost}:$RemoteDir/server.js"
     if ($LASTEXITCODE -ne 0) { Fail 'scp failed' }
 
-    Info 'restart expo-suggestions service'
+    Info 'restart tocomic-suggestions service'
     ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} `
-        'chown www:www /opt/expo-suggestions/server.js && systemctl restart expo-suggestions && sleep 1 && systemctl is-active expo-suggestions'
+        'chown www:www /opt/tocomic-suggestions/server.js && systemctl restart tocomic-suggestions && sleep 1 && systemctl is-active tocomic-suggestions'
     if ($LASTEXITCODE -ne 0) { Fail 'service restart failed' }
     Ok 'deployed and service is active'
 }
@@ -84,7 +84,7 @@ if ($PublishApk -ne '') {
     ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} `
         'chmod 644 /usr/share/nginx/html/toComic.apk'
     if ($LASTEXITCODE -ne 0) { Fail 'APK chmod failed' }
-    Ok 'APK published; update /var/lib/expo-suggestions/app-messages.json with: { update: { versionCode, versionName, title, body, url: "https://269278.xyz/toComic.apk" } }'
+    Ok 'APK published; update /var/lib/tocomic-suggestions/app-messages.json with: { update: { versionCode, versionName, title, body, url: "https://269278.xyz/toComic.apk" } }'
 }
 
 # ---------- 3. public API E2E ----------
@@ -135,7 +135,7 @@ if ($RunLocalAdminTests) {
         if (-not $login.ok) { Fail 'admin login failed' }
         Ok 'admin login ok'
 
-        $headers = @{ 'X-Expo-Admin' = '1' }
+        $headers = @{ 'X-ToComic-Admin' = '1' }
         $adminList = Invoke-RestMethod -Uri "$AdminUrl/api/suggestions" -Headers $headers -TimeoutSec 30
         if (-not $adminList.ok) { Fail 'admin list failed' }
         Ok "admin list ok, suggestions=$(@($adminList.suggestions).Count)"
@@ -159,7 +159,7 @@ if ($RunLocalAdminTests) {
 if ($Cleanup) {
     Info 'removing the E2E test suggestion from the server database'
     $escapedId = $submit.suggestion.id -replace '[^a-zA-Z0-9-]', ''
-    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} "node /opt/expo-suggestions/cleanup-suggestion.js $escapedId"
+    ssh -i $SshKey -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${ServerUser}@${ServerHost} "node /opt/tocomic-suggestions/cleanup-suggestion.js $escapedId"
     if ($LASTEXITCODE -ne 0) { Fail 'test-data cleanup failed' }
     Ok "cleaned test suggestion $escapedId"
 }
