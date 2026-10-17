@@ -1,6 +1,7 @@
 package com.cj2026.planner
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -8,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Parcelable
 import android.provider.MediaStore
 import android.provider.Settings
 import android.widget.Toast
@@ -81,6 +83,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -148,18 +151,43 @@ private enum class FileMode { Export, Import }
 private enum class ImportConflict { KeepExisting, OverwriteWithNotes, OverwriteWithoutNotes }
 
 class MainActivity : ComponentActivity() {
+    // 由 ACTION_SEND / ACTION_VIEW 送进来的行程文件；导入后置空
+    private val incomingShare = mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) incomingShare.value = extractSharedUri(intent)
         setContent {
             ChinaJoyTheme {
-                AppRoot()
+                AppRoot(incomingShare = incomingShare)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        extractSharedUri(intent)?.let { incomingShare.value = it }
+    }
+}
+
+private fun extractSharedUri(intent: Intent?): Uri? {
+    if (intent == null) return null
+    return when (intent.action) {
+        Intent.ACTION_SEND -> {
+            // 先按 Parcelable 取再安全转换：个别应用会把 EXTRA_STREAM 塞成别的类型，
+            // 直接写 <Uri> 泛型会在运行期抛 ClassCastException。
+            @Suppress("DEPRECATION")
+            val stream = intent.getParcelableExtra<Parcelable>(Intent.EXTRA_STREAM)
+            (stream as? Uri) ?: intent.data
+        }
+        Intent.ACTION_VIEW -> intent.data
+        else -> null
     }
 }
 
 @Composable
-private fun AppRoot() {
+private fun AppRoot(incomingShare: MutableState<Uri?>) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val projectStore = remember { ProjectStore(context) }
@@ -246,6 +274,18 @@ private fun AppRoot() {
         updateInfo = messages.update?.takeIf { it.versionCode > currentVersionCode }
     }
 
+    // 收到外部分享来的行程文件：只有一个项目时直接进去，否则提示先打开项目。
+    // 多项目时不丢弃这份分享，等用户打开任意项目后再导入。
+    val sharedUri = incomingShare.value
+    LaunchedEffect(sharedUri, allProjects.size) {
+        if (sharedUri == null || selectedProjectId != null) return@LaunchedEffect
+        if (allProjects.size == 1) {
+            selectedProjectId = allProjects.first().id
+        } else {
+            Toast.makeText(context, "收到分享文件, 请先打开要导入的项目", Toast.LENGTH_LONG).show()
+        }
+    }
+
     BackHandler(enabled = showSettings || project != null) {
         if (showSettings) showSettings = false else selectedProjectId = null
     }
@@ -261,7 +301,12 @@ private fun AppRoot() {
             onSettings = { showSettings = true }
         )
     } else {
-        PlannerApp(project = project, onBack = { selectedProjectId = null })
+        PlannerApp(
+            project = project,
+            onBack = { selectedProjectId = null },
+            sharedUri = sharedUri,
+            onSharedUriConsumed = { incomingShare.value = null }
+        )
     }
 
     if (showAddProject) {
@@ -788,22 +833,38 @@ private suspend fun saveExportToDownloads(context: Context, projectId: String, j
         }.isSuccess
     }
 
-private suspend fun shareExportFile(context: Context, projectId: String, json: String) =
-    withContext(Dispatchers.IO) {
+// 分享走系统分享面板。MIME 用 */* 而不是 application/json：
+// 声明接收 application/json 的应用极少，用严格类型会让分享面板几乎是空的，
+// 表现出来就是「点了分享没反应」。文件本身仍是 .json，接收方靠 Uri 的 MIME 与后缀识别。
+private const val EXPORT_SHARE_MIME = "*/*"
+
+private suspend fun shareExportFile(context: Context, projectId: String, json: String): Boolean {
+    val uri = withContext(Dispatchers.IO) {
         runCatching {
             val dir = File(context.cacheDir, "exports")
             dir.mkdirs()
             val file = File(dir, "toComic-$projectId-${System.currentTimeMillis()}.json")
             file.writeText(json)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/json"
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        }.getOrNull()
+    } ?: return false
+
+    return withContext(Dispatchers.Main) {
+        runCatching {
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = EXPORT_SHARE_MIME
                 putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_TITLE, "toComic 行程数据")
+                clipData = ClipData.newRawUri("toComic 行程数据", uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, "分享项目数据"))
-        }
+            val chooser = Intent.createChooser(send, "分享项目数据").apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(chooser)
+        }.isSuccess
     }
+}
 
 @Composable
 private fun ImportSettingsScreen(onBack: () -> Unit) {
@@ -1339,7 +1400,12 @@ private fun DeleteProjectConfirm(
 
 
 @Composable
-private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
+private fun PlannerApp(
+    project: ExpoProject,
+    onBack: () -> Unit,
+    sharedUri: Uri? = null,
+    onSharedUriConsumed: () -> Unit = {}
+) {
     val context = LocalContext.current
     val store = remember(project.id) { PlannerStore(context, project.id) }
     val appPrefs = remember { AppPrefs(context) }
@@ -1508,15 +1574,20 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
         }
     }
 
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
+    fun importFromUri(uri: Uri) {
+        scope.launch {
             val loaded = runCatching { store.importFrom(uri) }
             if (loaded.isFailure) {
-                val reason = when (loaded.exceptionOrNull()?.message) {
+                val error = loaded.exceptionOrNull()
+                val reason = when (error?.message) {
                     "import file too large" -> "文件过大(上限 5MB)"
                     "import file has too many entries" -> "条目过多(上限 10000 条)"
                     "import file is nested too deeply" -> "文件嵌套层级过深"
-                    else -> "文件无法解析"
+                    else -> if (error is SecurityException) {
+                        "文件无法读取, 请重新选择"
+                    } else {
+                        "文件无法解析, 请选择 toComic 导出的 .json 文件"
+                    }
                 }
                 snackbar.showSnackbar("导入失败: $reason")
                 return@launch
@@ -1566,6 +1637,20 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                 rememberImportChoice = false
                 showImportConflict = true
             }
+        }
+    }
+
+    // 用 */* 而不是 application/json：WeChat / 文件管理器 常把 .json 报成
+    // application/octet-stream，用严格类型会把这些文件过滤成不可选。
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importFromUri(uri)
+    }
+
+    // 由其他应用分享进来的行程文件（ACTION_SEND / ACTION_VIEW）
+    LaunchedEffect(sharedUri) {
+        if (sharedUri != null) {
+            onSharedUriConsumed()
+            importFromUri(sharedUri)
         }
     }
 
@@ -1708,13 +1793,15 @@ private fun PlannerApp(project: ExpoProject, onBack: () -> Unit) {
                 showFileMenu = false
                 scope.launch {
                     val json = store.exportJson(currentSnapshot(), keepFavorites)
-                    shareExportFile(context, project.id, json)
+                    if (!shareExportFile(context, project.id, json)) {
+                        snackbar.showSnackbar("分享失败, 可改用「保存」写入下载目录")
+                    }
                 }
             },
             onImport = { keepFavorites ->
                 importKeepFavorites = keepFavorites
                 showFileMenu = false
-                importLauncher.launch(arrayOf("application/json", "text/plain"))
+                importLauncher.launch(arrayOf("*/*"))
             }
         )
     }
