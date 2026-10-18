@@ -94,15 +94,21 @@ class CppImportTest {
         assertEquals("1913360", exhibit.boothCode)
         val booth = CppImport.toCustomBooth(exhibit)
         assertTrue(booth.note.contains("摊位号: 未公布"))
-        assertTrue(booth.note.contains("2026广州型月同人ONLY"))
+        // 活动名称与入场时间不导入
+        assertFalse(booth.note.contains("2026广州型月同人ONLY"))
+        assertFalse(booth.note.contains("2026-11-14"))
     }
 
     @Test
-    fun boothNoteCarriesEventAndSource() {
+    fun boothNoteKeepsCircleButDropsEventAndTime() {
         val exhibit = CppExhibit("281927", "某展品", listOf(event("7042", "叁A11叁A12", "CP32-二期", "2026-05-04")))
         val booth = CppImport.toCustomBooth(exhibit)
         assertEquals("叁", booth.hallId)
-        assertTrue(booth.note.contains("活动: CP32-二期"))
+        assertTrue("社团名要保留", booth.note.contains("社团: 百川社"))
+        assertFalse("活动名称不导入", booth.note.contains("活动:"))
+        assertFalse("入场时间不导入", booth.note.contains("入场:"))
+        assertFalse(booth.note.contains("CP32-二期"))
+        assertFalse(booth.note.contains("2026-05-04"))
         assertTrue(booth.note.contains("来源: https://www.allcpp.cn/d/281927.do"))
     }
 

@@ -114,9 +114,8 @@ object CppImport {
         val boothCode = if (announced) position else exhibit.exhibitId
         val noteLines = buildList {
             if (exhibit.title.isBlank()) add("CPP 展品 $exhibit.exhibitId")
-            chosen?.eventName?.takeIf { it.isNotBlank() }?.let { add("活动: $it") }
+            // 活动名称与入场时间不写进备注，只保留社团名
             chosen?.circleName?.takeIf { it.isNotBlank() }?.let { add("社团: $it") }
-            chosen?.enterTime?.takeIf { it.isNotBlank() }?.let { add("入场: $it") }
             if (!announced && chosen != null) add("摊位号: 未公布")
             if (chosen == null) add("暂无参展记录")
             add("来源: https://www.allcpp.cn/d/${exhibit.exhibitId}.do")
